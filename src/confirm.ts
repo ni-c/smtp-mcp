@@ -102,11 +102,26 @@ export interface ConfirmationDetail {
   value: string;
 }
 
+/**
+ * Everything a renderer might treat as the end of a line.
+ *
+ * The schemas refuse these already. This is the second lock, and it belongs
+ * here because this function is where the one-value-per-line promise is
+ * actually made: a value that could open a line of its own could forge a label,
+ * and the label is the only thing telling a human which value they are looking
+ * at. Beyond CR and LF, CSS `white-space: pre-wrap` — how an Electron client
+ * renders this message — breaks on U+000B, U+000C, U+0085, U+2028 and U+2029.
+ */
+// eslint-disable-next-line no-control-regex -- matching them is the point
+const LINE_BREAKS = /[\r\n\u0000\u000b\u000c\u0085\u2028\u2029]/g;
+
 function renderDetails(details: readonly ConfirmationDetail[]): string {
   if (details.length === 0) return '';
   return (
     '\n\nValues below are supplied by the caller, not by this server:\n' +
-    details.map((d) => `  ${d.label}: ${d.value}`).join('\n')
+    details
+      .map((d) => `  ${d.label}: ${d.value.replace(LINE_BREAKS, ' ')}`)
+      .join('\n')
   );
 }
 

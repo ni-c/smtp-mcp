@@ -518,3 +518,64 @@ describe('subject derivation', () => {
     expect(replySubject('x'.repeat(300)).length).toBe(255);
   });
 });
+
+describe('the approval is bound to the attachment bytes', () => {
+  it('will not spend a token after the file on disk changed', async () => {
+    // Between the two calls of the token path the files are read again. With
+    // only the names in the fingerprint, anyone able to write into
+    // SMTP_ATTACHMENT_DIR could swap the contents after approval.
+    const { mkdtemp, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const directory = await mkdtemp(join(tmpdir(), 'smtp-mcp-toctou-'));
+    const file = join(directory, 'report.pdf');
+    await writeFile(file, '%PDF-1.7 the approved contents');
+
+    const harness = await sending({ attachmentDir: directory });
+    const first = await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ attachments: ['report.pdf'] })
+    );
+
+    await writeFile(file, '%PDF-1.7 something else entirely');
+
+    await call(
+      harness.client,
+      'send_mail',
+      sendArgs({
+        attachments: ['report.pdf'],
+        confirm_token: tokenOf(first),
+      })
+    );
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('still sends when the file is unchanged', async () => {
+    const { mkdtemp, writeFile } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+
+    const directory = await mkdtemp(join(tmpdir(), 'smtp-mcp-toctou-'));
+    await writeFile(join(directory, 'report.pdf'), '%PDF-1.7 stable');
+
+    const harness = await sending({ attachmentDir: directory });
+    const first = await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ attachments: ['report.pdf'] })
+    );
+    await call(
+      harness.client,
+      'send_mail',
+      sendArgs({
+        attachments: ['report.pdf'],
+        confirm_token: tokenOf(first),
+      })
+    );
+    expect(harness.smtp.delivered).toHaveLength(1);
+    await harness.close();
+  });
+});

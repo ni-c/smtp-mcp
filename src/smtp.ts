@@ -8,6 +8,7 @@ import {
   type SmtpConfig,
 } from './config.js';
 import { SmtpError, ToolInputError } from './errors.js';
+import { sanitizeErrorBody } from './result.js';
 
 /** Result of handing one message to the SMTP server. */
 export interface SendOutcome {
@@ -122,9 +123,18 @@ export function createSmtpConnection(config: SmtpConfig): SmtpConnection {
 /**
  * Turns a nodemailer failure into one this server can report.
  *
- * Note what is not copied: nodemailer attaches the command it was sending to
- * the error, and for an AUTH exchange that command contains the credentials.
- * Only the code and the server's reply text come across.
+ * Two things are deliberately done to the upstream text here.
+ *
+ * Nodemailer attaches the command it was sending to the error, and for an AUTH
+ * exchange that command contains the credentials. It is not copied.
+ *
+ * And `error.message` is not the safe half. Nodemailer appends the server's
+ * reply to its own message (`_formatError` does `err.message += ': ' + response`),
+ * so the reply arrives twice: once in `responseText`, which `run()` truncates,
+ * and once inside `message`, which it did not. A hostile or merely broken SMTP
+ * server could put a hundred kilobytes of attacker-chosen prose — an HTML error
+ * page, or an instruction — straight into the model's context past every cap.
+ * So the message goes through the same sanitiser as the body.
  */
 export function asSmtpError(error: unknown, action: string): SmtpError {
   if (error instanceof SmtpError) return error;
@@ -138,7 +148,7 @@ export function asSmtpError(error: unknown, action: string): SmtpError {
     | undefined;
   const code = source?.code;
   const response = typeof source?.response === 'string' ? source.response : '';
-  const detail = source?.message ?? String(error);
+  const detail = sanitizeErrorBody(source?.message ?? String(error));
   return new SmtpError(
     `smtp-mcp: ${action} failed: ${detail}`,
     typeof code === 'string' ? code : undefined,

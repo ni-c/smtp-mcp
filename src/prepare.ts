@@ -7,6 +7,19 @@ import type { Config } from './config.js';
 import { ToolInputError } from './errors.js';
 import { refusedRecipients } from './recipients.js';
 
+/** Keeps the first spelling of each address, comparing case-insensitively. */
+function dedupeAddresses(addresses: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const kept: string[] = [];
+  for (const address of addresses) {
+    const key = address.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(address);
+  }
+  return kept;
+}
+
 /** The arguments every message-shaped tool accepts, after zod validation. */
 export interface MailArgs {
   to: string[];
@@ -33,8 +46,14 @@ export interface PreparedMessage {
   all: string[];
   attachments: LoadedAttachment[];
   /**
-   * Injection shapes found in the quoted original. A signal for the human
-   * approving the send, never a reason to refuse or to alter the quote.
+   * Injection shapes found in the text the caller supplied — the quoted
+   * original above all, but the body and the HTML part too.
+   *
+   * The quote is the obvious place to look, and looking only there was a gap:
+   * `forward_mail` documents `body` as "your own text", which is exactly the
+   * parameter an injected instruction would ask a model to use instead. The
+   * detector is a signal rather than a filter, so widening it costs nothing but
+   * a line in the dialog.
    */
   suspiciousQuote: string[];
 }
@@ -121,7 +140,10 @@ export async function prepareMessage(
       ...composed,
       envelope: {
         from: composed.envelope.from,
-        to: [...new Set(composed.envelope.to)],
+        // Deduplicated case-insensitively, matching how the recipient count is
+        // taken. A case-sensitive Set counted `A@x.net` and `a@x.net` as one
+        // address against the limit and then sent two RCPTs for them.
+        to: dedupeAddresses(composed.envelope.to),
       },
     },
     to,
@@ -129,10 +151,13 @@ export async function prepareMessage(
     bcc,
     all,
     attachments,
-    suspiciousQuote:
-      args.quote === undefined || args.quote === ''
-        ? []
-        : detectSuspicious(args.quote),
+    suspiciousQuote: [
+      ...new Set(
+        [args.quote, args.body, args.html]
+          .filter((text): text is string => text !== undefined && text !== '')
+          .flatMap((text) => detectSuspicious(text))
+      ),
+    ],
   };
 }
 
@@ -152,20 +177,39 @@ export async function prepareMessage(
  * would be no way to send anything at all. What has to be stable across those
  * two calls is what the caller asked for, and that is what is hashed.
  */
-export function messageFingerprint(args: MailArgs, all: string[]): string[] {
-  const digest = createHash('sha256')
-    .update(
-      JSON.stringify([
-        args.subject,
-        args.body,
-        args.html ?? '',
-        args.quote ?? '',
-        args.in_reply_to ?? '',
-        args.references ?? [],
-        args.attachments ?? [],
-      ])
-    )
-    .digest('hex')
-    .slice(0, 32);
-  return [...all, `content:${digest}`];
+export function messageFingerprint(
+  args: MailArgs,
+  prepared: PreparedMessage
+): string[] {
+  const content = createHash('sha256').update(
+    JSON.stringify([
+      args.subject,
+      args.body,
+      args.html ?? '',
+      args.quote ?? '',
+      args.in_reply_to ?? '',
+      args.references ?? [],
+      args.attachments ?? [],
+    ])
+  );
+  // The attachment *bytes*, not just the names. Between the two calls of the
+  // token path the files are read again, so anyone able to write into
+  // SMTP_ATTACHMENT_DIR could otherwise swap the contents after approval and
+  // before the send. Hashing them makes that a fresh prompt instead.
+  for (const attachment of prepared.attachments)
+    content.update(attachment.content);
+  const digest = content.digest('hex').slice(0, 32);
+
+  // The three recipient fields are hashed separately rather than folded into
+  // one sorted list. `setResourceKey` sorts what it is given, so a single list
+  // binds only the multiset of addresses — and moving somebody from To to Bcc,
+  // or from Bcc to To, leaves that multiset unchanged. Both directions matter:
+  // the first hides a recipient the human saw, the second exposes one they were
+  // told was hidden.
+  return [
+    `to:${[...args.to].sort().join(',')}`,
+    `cc:${[...(args.cc ?? [])].sort().join(',')}`,
+    `bcc:${[...(args.bcc ?? [])].sort().join(',')}`,
+    `content:${digest}`,
+  ];
 }

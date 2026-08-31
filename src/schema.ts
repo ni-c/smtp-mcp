@@ -4,31 +4,71 @@ import { z } from 'zod';
 export const MAX_ADDRESSES = 50;
 /** Ceiling on a body, before the composed-message cap in `compose.ts`. */
 export const MAX_BODY_CHARS = 500_000;
+/**
+ * Ceiling on an HTML body, well below the plain-text one.
+ *
+ * The HTML part is the only body that gets parsed rather than copied, and the
+ * removal passes in `sanitize.ts` are regex-based with bounded scan windows.
+ * Bounded is not the same as linear: a body full of unclosed tags makes each
+ * window run at every position, and at 500 kB that was fourteen seconds of
+ * blocked event loop per call — reachable through `preview_mail`, which needs
+ * no send gate, no confirmation and no rate limit. The ceiling and the anchored
+ * patterns in `sanitize.ts` are two halves of the same fix.
+ */
+export const MAX_HTML_CHARS = 64_000;
+
+/**
+ * Characters that end a line somewhere.
+ *
+ * CR and LF are the obvious ones — a CR in a recipient would let the caller
+ * append headers of its own, a Bcc or a Reply-To pointing elsewhere, to a
+ * message a human thought they had approved.
+ *
+ * The rest are here because of where these strings are rendered. The
+ * confirmation dialog puts each caller-supplied value on its own labelled line,
+ * and the comment in `confirm.ts` claims that refusing line breaks is what makes
+ * that rendering trustworthy. CSS `white-space: pre-wrap` — which is how an
+ * Electron MCP client shows that message — treats U+000B, U+000C, U+0085,
+ * U+2028 and U+2029 as forced line breaks too. Without them a subject of
+ * `Q3 report<U+2028>  To: chef@example.net` shows the human a recipient line the
+ * server never wrote, in the one string they are given before a message leaves.
+ */
+// eslint-disable-next-line no-control-regex -- matching them is the point
+const LINE_BREAKS = /[\r\n\u0000\u000b\u000c\u0085\u2028\u2029]/;
 
 /**
  * A single email address.
  *
- * Line breaks are refused because a recipient is written into a mail header: a
- * CR here would let the caller append headers of its own — a Bcc, a Reply-To
- * pointing somewhere else — to a message a human thought they had approved.
- * That is the whole attack, and it is cheap to close here.
+ * The local part is an RFC 5322 dot-atom and nothing else. That is narrower
+ * than it looks and the narrowness is load-bearing: a local part is allowed to
+ * contain a comma, and nodemailer re-parses the address when it builds the
+ * envelope and splits it there. So `ceo,anna@work.example` passed an allowlist
+ * for `@work.example` — `domainOf` sees the one allowed domain — and then went
+ * out as **two** RCPT commands, the first of them a bare `ceo` that no check
+ * ever saw and that a submission relay qualifies with its own domain. The
+ * dialog said one recipient; two were addressed.
  *
- * The shape is deliberately narrow: exactly one `@`, a dot in the domain, no
- * whitespace, no display name. Two consequences worth knowing. `Name <a@b.net>`
- * is refused — the display name of a *recipient* is decoration this server does
+ * The domain is ASCII letters, digits, hyphens and dots. Non-ASCII domains
+ * could never match the allowlist anyway (`parseAllowlist` only admits ASCII),
+ * so refusing them here changes no outcome and removes a whole class of
+ * question about what folds onto what.
+ *
+ * Display names are refused: `Name <a@b.net>` is decoration a *recipient* does
  * not need, and parsing it correctly means implementing RFC 5322 phrase syntax.
- * And `a@evil.example@corp.example` cannot match, because neither the local
- * part nor the domain may contain a second `@` — which is what stops the oldest
- * trick for getting past an allowlist that splits on the first one.
  */
+const DOT_ATOM = String.raw`[A-Za-z0-9!#$%&'*+/=?^_\`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_\`{|}~-]+)*`;
+const DOMAIN = String.raw`[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)+`;
+const ADDRESS = new RegExp(`^${DOT_ATOM}@${DOMAIN}$`);
+
 export const addressParam = z
   .string()
   .min(3)
   .max(320)
-  .refine((v) => !/[\r\n\0]/.test(v), 'must not contain line breaks')
+  .refine((v) => !LINE_BREAKS.test(v), 'must not contain line breaks')
   .refine(
-    (v) => /^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(v),
-    'must be a bare email address such as person@example.net, with no display name'
+    (v) => ADDRESS.test(v),
+    'must be a bare email address such as person@example.net — no display name, ' +
+      'no comma, no angle brackets, and an ASCII domain'
   )
   .describe('A single email address, e.g. person@example.net.');
 
@@ -69,7 +109,7 @@ export const bccParam = z
 export const subjectParam = z
   .string()
   .max(255)
-  .refine((v) => !/[\r\n\0]/.test(v), 'must not contain line breaks')
+  .refine((v) => !LINE_BREAKS.test(v), 'must not contain line breaks')
   .describe('Subject line. Must fit on one line.');
 
 export const bodyParam = z
@@ -79,7 +119,7 @@ export const bodyParam = z
 
 export const htmlParam = z
   .string()
-  .max(MAX_BODY_CHARS)
+  .max(MAX_HTML_CHARS)
   .optional()
   .describe(
     'Optional HTML body, sent as multipart/alternative alongside the plain ' +

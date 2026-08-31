@@ -244,9 +244,14 @@ export async function run(
     }
     if (error instanceof SmtpError) {
       const body = sanitizeErrorBody(error.responseText);
-      return errorResult(
-        `${error.message}${body === '' ? '' : `\n${body}`}${hintFor(error)}`
-      );
+      // The reply is the far side talking. It is short by the time it gets
+      // here, but it is still text this server did not write, and it lands in
+      // the model's context — so it is labelled like everything else that came
+      // from elsewhere rather than being run together with the server's own
+      // sentence.
+      const quoted =
+        body === '' ? '' : `\nThe SMTP server replied (untrusted): ${body}`;
+      return errorResult(`${error.message}${quoted}${hintFor(error)}`);
     }
     const message = error instanceof Error ? error.message : String(error);
     return errorResult(`smtp-mcp: ${message}`);

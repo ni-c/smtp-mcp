@@ -68,6 +68,26 @@ function assertHeaderSafe(name: string, value: string): void {
   }
 }
 
+/**
+ * One address, one RCPT.
+ *
+ * `addressParam` already guarantees this — the local part is a dot-atom, so it
+ * cannot contain a separator. This is the second lock on the same door, and it
+ * exists because the door was open: a comma in a local part passed the
+ * allowlist as one address (the domain was allowlisted) and then nodemailer's
+ * own parser split it into two RCPT commands, the second of which no check had
+ * ever seen. If the schema is ever loosened, delivery must fail here rather
+ * than quietly address somebody nobody approved.
+ */
+function assertSingleRecipient(address: string): void {
+  if (/[,;<>:()[\]\\"\s]/.test(address)) {
+    throw new ToolInputError(
+      `smtp-mcp: "${address}" is not a single recipient address — it contains ` +
+        'a character that a mail server would read as a separator.'
+    );
+  }
+}
+
 /** Wraps a Message-ID in angle brackets if it does not have them already. */
 export function normalizeMessageId(value: string): string {
   const bare = value.trim().replace(/^<|>$/g, '');
@@ -148,6 +168,7 @@ export async function composeMessage(
   assertHeaderSafe('Subject', input.subject);
   for (const address of [...input.to, ...input.cc, ...input.bcc]) {
     assertHeaderSafe('To', address);
+    assertSingleRecipient(address);
   }
 
   let htmlRemoved: string[] = [];

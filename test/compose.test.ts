@@ -120,9 +120,9 @@ describe('composeMessage', () => {
   it('appends the signature below the standard delimiter', async () => {
     const composed = await compose(
       {},
-      testConfig({ signature: 'Willi\nRoamsys' })
+      testConfig({ signature: 'Ada Lovelace\nExample GmbH' })
     );
-    expect(composed.textBody).toContain('\n-- \nWilli\nRoamsys');
+    expect(composed.textBody).toContain('\n-- \nAda Lovelace\nExample GmbH');
   });
 
   it('sanitises the HTML part and reports what it removed', async () => {

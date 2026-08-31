@@ -303,3 +303,175 @@ describe('the shape of the default installation', () => {
     await harness.close();
   });
 });
+
+describe('separators smuggled into an address', () => {
+  it('refuses a comma in the local part', async () => {
+    // The address passed the allowlist as one recipient — the domain is
+    // allowlisted — and nodemailer then split it into two RCPT commands, the
+    // first a bare local part that no check had seen and that a submission
+    // relay qualifies with its own domain. The dialog said one recipient.
+    const harness = await connect({ config: { allowSend: true } });
+    const result = await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ to: ['ceo,anna@example.net'] })
+    );
+    expect(result.isError).toBe(true);
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('refuses every other character a mail server reads as a separator', async () => {
+    const harness = await connect({ config: { allowSend: true } });
+    for (const local of [
+      'a;b',
+      'a<b',
+      'a>b',
+      'a:b',
+      'a(b',
+      'a)b',
+      'a[b',
+      'a]b',
+      'a\\b',
+      'a"b',
+    ]) {
+      const result = await call(
+        harness.client,
+        'send_mail',
+        sendArgs({ to: [`${local}@example.net`] })
+      );
+      expect(result.isError).toBe(true);
+    }
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('still accepts the punctuation a real local part uses', async () => {
+    const harness = await connect({ config: { allowSend: true } });
+    for (const local of [
+      'first.last',
+      "o'brien",
+      'a+tag',
+      'a_b-c',
+      'a!#$%&*',
+    ]) {
+      const result = await call(
+        harness.client,
+        'preview_mail',
+        sendArgs({ to: [`${local}@example.net`] })
+      );
+      expect(result.isError).not.toBe(true);
+    }
+    await harness.close();
+  });
+});
+
+describe('forging a line in the confirmation dialog', () => {
+  it('refuses the separators a renderer breaks on, not just CR and LF', async () => {
+    // CSS white-space: pre-wrap — how an Electron client shows the dialog —
+    // treats these as forced line breaks, so a subject could add a recipient
+    // line the server never wrote.
+    const harness = await connect({ config: { allowSend: true } });
+    for (const separator of [
+      '\u000b',
+      '\u000c',
+      '\u0085',
+      '\u2028',
+      '\u2029',
+    ]) {
+      const result = await call(
+        harness.client,
+        'send_mail',
+        sendArgs({ subject: `Q3${separator}  To: chef@example.net` })
+      );
+      expect(result.isError).toBe(true);
+    }
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('keeps every caller value on exactly one line in the dialog', async () => {
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    await call(harness.client, 'send_mail', sendArgs());
+    const labelled = harness.prompts
+      .join('\n')
+      .split('\n')
+      .filter((line) => /^ {2}\w[\w ()_]*:/.test(line));
+    // From, To and Subject — one line each, no more.
+    expect(labelled).toHaveLength(3);
+    await harness.close();
+  });
+});
+
+describe('moving a recipient after approval', () => {
+  it('will not spend a To approval on the same person as Bcc', async () => {
+    // The recipient multiset is unchanged, so a fingerprint over one sorted
+    // list would have matched — and the human who approved a visible recipient
+    // would have sent a hidden one.
+    const harness = await connect({ config: { allowSend: true } });
+    const first = await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ to: ['anna@example.net', 'partner@example.org'] })
+    );
+    await call(
+      harness.client,
+      'send_mail',
+      sendArgs({
+        to: ['anna@example.net'],
+        bcc: ['partner@example.org'],
+        confirm_token: tokenOf(first),
+      })
+    );
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('will not spend a Bcc approval on the same person in To', async () => {
+    // The other direction, which exposes somebody who was told they were hidden.
+    const harness = await connect({ config: { allowSend: true } });
+    const first = await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ to: ['anna@example.net'], bcc: ['partner@example.org'] })
+    );
+    await call(
+      harness.client,
+      'send_mail',
+      sendArgs({
+        to: ['anna@example.net', 'partner@example.org'],
+        confirm_token: tokenOf(first),
+      })
+    );
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+});
+
+describe('the hourly cap under concurrency', () => {
+  it('holds when five sends are issued at once', async () => {
+    // MCP clients issue tool calls in parallel. Checking availability and only
+    // counting after the SMTP server answers left the whole round trip as a
+    // window in which every call saw the same slot free — five went out
+    // against a limit of one.
+    const harness = await connect({
+      config: { allowSend: true, maxSendsPerHour: 1 },
+      elicit: 'accept',
+    });
+    const results = await Promise.all(
+      [1, 2, 3, 4, 5].map((i) =>
+        call(
+          harness.client,
+          'send_mail',
+          sendArgs({ subject: `Message ${i}`, body: `Body ${i}` })
+        )
+      )
+    );
+    expect(harness.smtp.delivered).toHaveLength(1);
+    expect(results.filter((r) => r.isError === true)).toHaveLength(4);
+    await harness.close();
+  });
+});

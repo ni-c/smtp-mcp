@@ -127,3 +127,41 @@ describe('htmlToText', () => {
     expect(htmlToText('<div>  a   <span>b</span>  </div>')).toBe('a b');
   });
 });
+
+describe('malformed markup cannot stall the event loop', () => {
+  // These are timings, which is unusual in a unit suite and deliberate here.
+  // The patterns are bounded but were not linear: `<img ` repeated with no `>`
+  // made every window run at every position, and a 500 kB body took fourteen
+  // seconds of blocked event loop — through preview_mail, which needs no send
+  // gate, no confirmation and no rate limit. The bound is generous enough not
+  // to be flaky on a loaded machine and far below the failure it guards.
+  const BUDGET_MS = 400;
+
+  const pathological: Array<[string, string]> = [
+    ['unclosed img tags', '<img '.repeat(12800)],
+    ['unclosed script tags', '<script '.repeat(8000)],
+    ['unterminated comments', '<!--'.repeat(16000)],
+    ['nothing but angle brackets', '<'.repeat(64000)],
+    ['many opens and one close', '<script >'.repeat(7000) + '</script>'],
+  ];
+
+  for (const [name, input] of pathological) {
+    it(`sanitizes ${name} promptly`, () => {
+      const started = process.hrtime.bigint();
+      sanitizeHtml(input);
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      expect(ms).toBeLessThan(BUDGET_MS);
+    });
+
+    it(`converts ${name} to text promptly`, () => {
+      const started = process.hrtime.bigint();
+      htmlToText(input);
+      const ms = Number(process.hrtime.bigint() - started) / 1e6;
+      expect(ms).toBeLessThan(BUDGET_MS);
+    });
+  }
+
+  it('refuses a body over the ceiling rather than working on it', () => {
+    expect(() => sanitizeHtml('x'.repeat(64_001))).toThrow(/over the limit/);
+  });
+});

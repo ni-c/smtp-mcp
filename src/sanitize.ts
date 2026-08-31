@@ -1,4 +1,5 @@
 import { ToolInputError } from './errors.js';
+import { MAX_HTML_CHARS as SCHEMA_MAX_HTML_CHARS } from './schema.js';
 
 /**
  * Upper bound on an HTML body.
@@ -8,18 +9,33 @@ import { ToolInputError } from './errors.js';
  * half the text is better than none. Here the reader is a recipient, and half a
  * message is worse than an error: it would arrive looking deliberate.
  */
-const MAX_HTML_CHARS = 512_000;
-/** Bounds each removal regex so a body full of unclosed tags cannot hang it. */
-const MAX_BLOCK_CHARS = 50_000;
+const MAX_HTML_CHARS = SCHEMA_MAX_HTML_CHARS;
+/**
+ * Bounds each removal regex.
+ *
+ * Bounded is not the same as linear, and that difference was a real finding.
+ * `<img ` repeated 100 000 times contains no `>`, so a pattern whose attribute
+ * part was `[^>]*` scanned to the end of the string from every one of those
+ * positions: 14 seconds of blocked event loop, reachable through `preview_mail`
+ * with sending switched off. Two changes together fix it — the attribute and
+ * tag-name parts below exclude `<` as well as `>`, so a malformed run fails at
+ * the very next character instead of scanning, and the window is small enough
+ * that the remaining quadratic case (many opening tags, no closing one) stays
+ * in single-digit milliseconds against the 64 kB input ceiling.
+ *
+ * `test/sanitize.test.ts` asserts the timing, because this is the kind of
+ * property that regresses silently the next time a pattern is edited.
+ */
+const MAX_BLOCK_CHARS = 4_000;
 
 /** Elements dropped together with their contents. */
 const DANGEROUS_BLOCK = new RegExp(
-  `<(script|style|iframe|object|embed|applet|noscript|template|form|svg|math)\\b[\\s\\S]{0,${MAX_BLOCK_CHARS}}?<\\/\\1\\s*>`,
+  `<(script|style|iframe|object|embed|applet|noscript|template|form|svg|math)\\b[^<>]{0,2000}>[\\s\\S]{0,${MAX_BLOCK_CHARS}}?<\\/\\1\\s*>`,
   'gi'
 );
 /** The same elements when they are left unclosed, plus the void ones. */
 const DANGEROUS_VOID =
-  /<\/?(script|style|iframe|object|embed|applet|noscript|template|form|svg|math|base|link|meta|frame|frameset)\b[^>]*>/gi;
+  /<\/?(script|style|iframe|object|embed|applet|noscript|template|form|svg|math|base|link|meta|frame|frameset)\b[^<>]*>/gi;
 
 /**
  * Elements a mail client fetches on its own. Removing them is the difference
@@ -31,14 +47,14 @@ const DANGEROUS_VOID =
  * by themselves, and an HTML mail without links is not worth sending.
  */
 const REMOTE_SUBRESOURCE =
-  /<(img|image|input|video|audio|source|track|iframe)\b[^>]*\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>/gi;
+  /<(img|image|input|video|audio|source|track|iframe)\b[^<>]*\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s<>]+))[^<>]*>/gi;
 
 /** Attributes that run script when the recipient does anything at all. */
-const EVENT_HANDLER = /\son[a-z]{1,20}\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
+const EVENT_HANDLER = /\son[a-z]{1,20}\s*=\s*(?:"[^"]*"|'[^']*'|[^\s<>]+)/gi;
 
 /** URL-valued attributes whose scheme has to be checked. */
 const URL_ATTRIBUTE =
-  /\s(href|src|action|formaction|data|poster|background|cite)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+  /\s(href|src|action|formaction|data|poster|background|cite)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s<>]+))/gi;
 
 /** `url(...)` inside a style attribute — another way to fetch a remote asset. */
 const CSS_URL = /url\s*\(\s*(['"]?)[^)'"]{0,2000}\1\s*\)/gi;
@@ -152,14 +168,16 @@ export function htmlToText(html: string): string {
       .replace(new RegExp(`<!--[\\s\\S]{0,${MAX_BLOCK_CHARS}}?-->`, 'g'), ' ')
       .replace(
         new RegExp(
-          `<(script|style|head|title|noscript|template)\\b[\\s\\S]{0,${MAX_BLOCK_CHARS}}?<\\/\\1>`,
+          `<(script|style|head|title|noscript|template)\\b[^<>]{0,2000}>[\\s\\S]{0,${MAX_BLOCK_CHARS}}?<\\/\\1>`,
           'gi'
         ),
         ' '
       )
       .replace(/<br\s*\/?>/gi, '\n')
       .replace(/<\/(p|div|tr|li|h[1-6]|table|blockquote)>/gi, '\n')
-      .replace(/<[^>]+>/g, ' ')
+      // `[^<>]` rather than `[^>]` for the same reason as the patterns above: a
+      // run of `<` with no `>` would otherwise be scanned from every position.
+      .replace(/<[^<>]*>/g, ' ')
       .replace(/&nbsp;/gi, ' ')
       .replace(/&lt;/gi, '<')
       .replace(/&gt;/gi, '>')

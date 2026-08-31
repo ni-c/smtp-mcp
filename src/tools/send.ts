@@ -11,7 +11,9 @@ import {
   messageFingerprint,
   prepareMessage,
   type MailArgs,
+  type PreparedMessage,
 } from '../prepare.js';
+import type { RateLimitSlot } from '../ratelimit.js';
 import { jsonResult, run } from '../result.js';
 import {
   attachmentsParam,
@@ -66,10 +68,13 @@ function listFor(addresses: readonly string[]): string {
  *
  * The order matters in two non-obvious ways:
  *
- * - The **rate limit is checked before the dialog** so a limit that is already
- *   reached does not put a pointless question in front of a human — but it is
- *   **recorded after the server accepts**, so a declined dialog or a rejected
- *   message does not burn quota. Sending is what is limited, not asking.
+ * - The **rate-limit slot is reserved before the dialog** and only committed
+ *   once the server accepts. Reserving matters as much as committing: checking
+ *   availability and counting afterwards leaves the whole round trip to the
+ *   SMTP server as a window in which concurrent calls all see the same slot
+ *   free, and MCP clients issue tool calls in parallel. A declined dialog or a
+ *   refused message releases the slot, because sending is what is limited, not
+ *   asking.
  * - The **audit line is written after the send**, because it records what
  *   happened rather than what was intended, and a message the server refused
  *   must not appear in the log as one that went out.
@@ -85,8 +90,36 @@ async function performSend(
 ): Promise<CallToolResult> {
   const prepared = await prepareMessage(args, ctx.config, ctx.version);
 
-  ctx.limiter.assertAvailable();
+  const slot = ctx.limiter.reserve();
+  try {
+    return await withSlot(
+      server,
+      ctx,
+      confirmations,
+      tool,
+      verb,
+      args,
+      confirmToken,
+      prepared,
+      slot
+    );
+  } catch (error) {
+    slot.release();
+    throw error;
+  }
+}
 
+async function withSlot(
+  server: McpServer,
+  ctx: ToolContext,
+  confirmations: ConfirmationStore,
+  tool: string,
+  verb: string,
+  args: MailArgs,
+  confirmToken: string | undefined,
+  prepared: PreparedMessage,
+  slot: RateLimitSlot
+): Promise<CallToolResult> {
   const details: ConfirmationDetail[] = [
     {
       label: 'From (fixed by SMTP_FROM)',
@@ -138,18 +171,23 @@ async function performSend(
   const approval = await requestApproval(server, confirmations, {
     what: `${verb} to ${prepared.composed.envelope.to.length} recipient(s)`,
     consequence,
-    resourceKey: setResourceKey(tool, messageFingerprint(args, prepared.all)),
+    resourceKey: setResourceKey(tool, messageFingerprint(args, prepared)),
     token: confirmToken,
     details,
   });
-  if (!approval.approved) return approval.result;
+  if (!approval.approved) {
+    // Asked and not answered yet, or declined. Either way nothing left the
+    // building, so the slot goes back.
+    slot.release();
+    return approval.result;
+  }
 
   const outcome = await ctx.client.send({
     envelope: prepared.composed.envelope,
     raw: prepared.composed.raw,
   });
 
-  ctx.limiter.record();
+  slot.commit();
   audit(
     tool,
     {
