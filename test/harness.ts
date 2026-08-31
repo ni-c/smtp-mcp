@@ -32,7 +32,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
       insecureTls: false,
       from: 'Me <me@example.net>',
       fromAddress: 'me@example.net',
-      ...(overrides.smtp ?? {}),
+      ...overrides.smtp,
     },
     allowSend: overrides.allowSend ?? false,
     allowedRecipients:
