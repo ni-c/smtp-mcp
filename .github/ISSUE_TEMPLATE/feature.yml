@@ -1,0 +1,40 @@
+name: Feature request
+description: A tool or capability the server should have
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Three requests are out of scope by design, because they are the reasons
+        this server is safe to point at a real mailbox. **A caller-chosen
+        sender**: `SMTP_FROM` is the only sender, so a model cannot write in a
+        colleague's name. **A way to skip the confirmation**: every message is
+        approved by a person, and an option to turn that off would be the first
+        thing a prompt injection reaches for. **Reading mail**: that is
+        [imap-mcp](https://github.com/ni-c/imap-mcp), and keeping the two apart
+        is what stops one compromised session from both finding secrets and
+        mailing them out. See the security section of the README.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: The situation or workflow, not yet the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What should the server be able to do?
+    validations:
+      required: true
+  - type: input
+    id: endpoint
+    attributes:
+      label: SMTP extension or RFC (if you know it)
+      description: >-
+        A link to the RFC or to your server's documentation makes this much faster —
+        e.g. RFC 5321 for SMTP, RFC 5322 for the message format, RFC 6531 for SMTPUTF8.
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Workarounds you considered

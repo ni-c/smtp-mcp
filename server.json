@@ -1,0 +1,233 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.ni-c/smtp-mcp",
+  "title": "SMTP",
+  "description": "MCP server that sends mail over SMTP, gated behind an allowlist and a human confirmation",
+  "websiteUrl": "https://smtp-mcp.ni-c.de",
+  "repository": {
+    "url": "https://github.com/ni-c/smtp-mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@ni-c/smtp-mcp",
+      "version": "0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SMTP_HOST",
+          "description": "Hostname of the SMTP server, e.g. smtp.example.net.",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "SMTP_PORT",
+          "description": "Port. Defaults to 587 for starttls, 465 for implicit, 25 for none.",
+          "format": "number"
+        },
+        {
+          "name": "SMTP_TLS",
+          "description": "starttls (default), implicit or none. STARTTLS is required, never opportunistic.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_USER",
+          "description": "Username for SMTP authentication.",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "SMTP_PASSWORD",
+          "description": "Password or app-specific password for SMTP authentication.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "SMTP_FROM",
+          "description": "The only sender this server will use, e.g. \"Name <person@example.net>\". There is no from parameter.",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "SMTP_ALLOW_SEND",
+          "description": "Set to \"true\" to register the sending tools. Defaults to false: the server cannot send until it is set.",
+          "format": "boolean"
+        },
+        {
+          "name": "SMTP_ALLOWED_RECIPIENTS",
+          "description": "Comma-separated addresses and @domains this server may write to. Required with SMTP_ALLOW_SEND=true; \"*\" allows any.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_MAX_RECIPIENTS",
+          "description": "Maximum distinct recipients across To, Cc and Bcc in one message. Default 10.",
+          "format": "number"
+        },
+        {
+          "name": "SMTP_MAX_SENDS_PER_HOUR",
+          "description": "Sliding hourly cap on messages sent. Default 20.",
+          "format": "number"
+        },
+        {
+          "name": "SMTP_MAX_MESSAGE_BYTES",
+          "description": "Maximum size of the composed message. Default 10485760.",
+          "format": "number"
+        },
+        {
+          "name": "SMTP_MAX_ATTACHMENT_BYTES",
+          "description": "Maximum size of a single attachment. Default 5242880.",
+          "format": "number"
+        },
+        {
+          "name": "SMTP_ATTACHMENT_DIR",
+          "description": "Directory attachments are read from. Unset means attachments are unavailable.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_ATTACHMENT_TYPES",
+          "description": "Comma-separated content types that may be attached. Defaults to a document and image allowlist.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_SIGNATURE",
+          "description": "Text appended below the standard signature delimiter of every message.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_AUDIT_LOG",
+          "description": "File the audit lines are appended to, in addition to stderr.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_ALLOW_TOOLS",
+          "description": "Comma-separated tool names, a prefix with one trailing *, or \"essential\" for the curated preset.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_DENY_TOOLS",
+          "description": "Comma-separated tool names or prefixes to remove, applied after SMTP_ALLOW_TOOLS.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_INSECURE_TLS",
+          "description": "Set to \"true\" to accept self-signed certificates. Prefer a proper internal CA.",
+          "format": "boolean"
+        }
+      ]
+    },
+    {
+      "registryType": "oci",
+      "identifier": "ghcr.io/ni-c/smtp-mcp:0.1.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "SMTP_HOST",
+          "description": "Hostname of the SMTP server, e.g. smtp.example.net.",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "SMTP_PORT",
+          "description": "Port. Defaults to 587 for starttls, 465 for implicit, 25 for none.",
+          "format": "number"
+        },
+        {
+          "name": "SMTP_TLS",
+          "description": "starttls (default), implicit or none. STARTTLS is required, never opportunistic.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_USER",
+          "description": "Username for SMTP authentication.",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "SMTP_PASSWORD",
+          "description": "Password or app-specific password for SMTP authentication.",
+          "isRequired": true,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "SMTP_FROM",
+          "description": "The only sender this server will use, e.g. \"Name <person@example.net>\". There is no from parameter.",
+          "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "SMTP_ALLOW_SEND",
+          "description": "Set to \"true\" to register the sending tools. Defaults to false: the server cannot send until it is set.",
+          "format": "boolean"
+        },
+        {
+          "name": "SMTP_ALLOWED_RECIPIENTS",
+          "description": "Comma-separated addresses and @domains this server may write to. Required with SMTP_ALLOW_SEND=true; \"*\" allows any.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_MAX_RECIPIENTS",
+          "description": "Maximum distinct recipients across To, Cc and Bcc in one message. Default 10.",
+          "format": "number"
+        },
+        {
+          "name": "SMTP_MAX_SENDS_PER_HOUR",
+          "description": "Sliding hourly cap on messages sent. Default 20.",
+          "format": "number"
+        },
+        {
+          "name": "SMTP_MAX_MESSAGE_BYTES",
+          "description": "Maximum size of the composed message. Default 10485760.",
+          "format": "number"
+        },
+        {
+          "name": "SMTP_MAX_ATTACHMENT_BYTES",
+          "description": "Maximum size of a single attachment. Default 5242880.",
+          "format": "number"
+        },
+        {
+          "name": "SMTP_ATTACHMENT_DIR",
+          "description": "Directory attachments are read from. Unset means attachments are unavailable.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_ATTACHMENT_TYPES",
+          "description": "Comma-separated content types that may be attached. Defaults to a document and image allowlist.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_SIGNATURE",
+          "description": "Text appended below the standard signature delimiter of every message.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_AUDIT_LOG",
+          "description": "File the audit lines are appended to, in addition to stderr.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_ALLOW_TOOLS",
+          "description": "Comma-separated tool names, a prefix with one trailing *, or \"essential\" for the curated preset.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_DENY_TOOLS",
+          "description": "Comma-separated tool names or prefixes to remove, applied after SMTP_ALLOW_TOOLS.",
+          "format": "string"
+        },
+        {
+          "name": "SMTP_INSECURE_TLS",
+          "description": "Set to \"true\" to accept self-signed certificates. Prefer a proper internal CA.",
+          "format": "boolean"
+        }
+      ]
+    }
+  ]
+}

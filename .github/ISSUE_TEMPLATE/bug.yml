@@ -1,0 +1,53 @@
+name: Bug report
+description: Something behaves wrongly or breaks
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        This issue is public. Please do not paste real subjects, recipient
+        addresses or message bodies — replace them with placeholders before
+        submitting.
+  - type: input
+    id: version
+    attributes:
+      label: 'smtp-mcp version'
+      placeholder: '0.1.0 (npm version, docker tag or commit)'
+    validations:
+      required: true
+  - type: input
+    id: target
+    attributes:
+      label: SMTP server
+      description: Which server or provider, and its version if you know it (Postfix 3.9, Gmail, Fastmail, Exchange, Mailpit, …).
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      placeholder: 'Claude Code, Claude Desktop, Codex, MCP Inspector, …'
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Mode
+      options:
+        - Sending off (the default)
+        - Sending enabled (SMTP_ALLOW_SEND=true)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Which tool you called, what you expected, what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: >-
+        Tool result or stderr. Please redact passwords, message contents, addresses,
+        internal hostnames and IPs — this issue is public.
+      render: text

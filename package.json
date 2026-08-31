@@ -1,0 +1,70 @@
+{
+  "name": "@ni-c/smtp-mcp",
+  "version": "0.1.0",
+  "mcpName": "io.github.ni-c/smtp-mcp",
+  "description": "MCP server that sends mail over SMTP, gated behind an allowlist and a human confirmation",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "smtp",
+    "email",
+    "mail",
+    "nodemailer",
+    "send"
+  ],
+  "license": "MIT",
+  "author": "Willi Thiel",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ni-c/smtp-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ni-c/smtp-mcp/issues"
+  },
+  "homepage": "https://smtp-mcp.ni-c.de",
+  "funding": "https://github.com/sponsors/ni-c",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "bin": {
+    "smtp-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "!dist/**/*.map"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "prepublishOnly": "npm run lint && npm run build && npm test",
+    "prebuild": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "lint": "eslint . && prettier --check .",
+    "format": "prettier --write .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "assets": "node scripts/gen-assets.mjs",
+    "assets:check": "node scripts/gen-assets.mjs --check"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "nodemailer": "^9.0.6",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@resvg/resvg-js": "^2.6.2",
+    "@types/node": "^26.4.0",
+    "@types/nodemailer": "^8.0.1",
+    "@vitest/coverage-v8": "4.1.11",
+    "eslint": "^10.9.1",
+    "prettier": "^3.9.6",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.68.0",
+    "vitest": "^4.1.11"
+  }
+}
