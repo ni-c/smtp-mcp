@@ -296,9 +296,12 @@ describe('reaching the filesystem through an attachment', () => {
 describe('the shape of the default installation', () => {
   it('cannot send at all before an operator turns it on', async () => {
     const harness = await connect();
-    const result = await call(harness.client, 'send_mail', sendArgs());
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatch(/not found/i);
+    // SDK v2 answers a call to an unknown tool with a JSON-RPC error rather
+    // than a result carrying isError. The tool is still absent and the SMTP
+    // server is still never reached, which is what this test is about.
+    await expect(call(harness.client, 'send_mail', sendArgs())).rejects.toThrow(
+      /not found/i
+    );
     expect(harness.smtp.calls).toHaveLength(0);
     await harness.close();
   });

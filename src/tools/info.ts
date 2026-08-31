@@ -1,14 +1,6 @@
 import { createHash } from 'node:crypto';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-
-import { sanitizeText } from '../analyze.js';
-import { allowedExtensions } from '../attachments.js';
-import { missingConfigKeys } from '../config.js';
-import { prepareMessage, type PreparedMessage } from '../prepare.js';
-import { describeAllowlist, isAllowed } from '../recipients.js';
-import { fencedUntrustedResult, jsonResult, run } from '../result.js';
 import {
   addressParam,
   attachmentsParam,
@@ -22,6 +14,13 @@ import {
   subjectParam,
   toParam,
 } from '../schema.js';
+
+import { sanitizeText } from '../analyze.js';
+import { allowedExtensions } from '../attachments.js';
+import { missingConfigKeys } from '../config.js';
+import { prepareMessage, type PreparedMessage } from '../prepare.js';
+import { describeAllowlist, isAllowed } from '../recipients.js';
+import { fencedUntrustedResult, jsonResult, run } from '../result.js';
 import { ALL_TOOLS, INFO_TOOLS } from './catalogue.js';
 import type { ToolContext } from './context.js';
 
@@ -78,7 +77,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         'is allowed to write to, the current limits and whether sending is ' +
         'switched on at all. Call this first: it answers "can I send, and to ' +
         'whom" without touching the network.',
-      inputSchema: {},
+      inputSchema: z.object({}),
       annotations: { readOnlyHint: true },
     },
     () =>
@@ -133,13 +132,13 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         'and why the others are refused. Nothing is sent and no connection is ' +
         'made. Use it before composing a message rather than discovering the ' +
         'refusal afterwards.',
-      inputSchema: {
+      inputSchema: z.object({
         addresses: z
           .array(addressParam)
           .min(1)
           .max(100)
           .describe('The email addresses to check.'),
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     ({ addresses }) =>
@@ -178,7 +177,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         'whether a message is acceptable before asking a human to approve it. ' +
         'Attachment payloads are summarised by name, size and digest rather ' +
         'than printed.',
-      inputSchema: {
+      inputSchema: z.object({
         to: toParam,
         cc: ccParam,
         bcc: bccParam,
@@ -189,7 +188,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         in_reply_to: messageIdParam.optional(),
         references: referencesParam,
         attachments: attachmentsParam,
-      },
+      }),
       annotations: { readOnlyHint: true },
     },
     (args) =>
@@ -221,7 +220,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         'Opens a connection to the SMTP server, negotiates TLS and ' +
         'authenticates, then closes it again. No message is sent. Use it to ' +
         'tell a configuration problem apart from a delivery problem.',
-      inputSchema: {},
+      inputSchema: z.object({}),
       // Nothing changes on the far side: this opens a session and closes it.
       annotations: { readOnlyHint: true },
     },

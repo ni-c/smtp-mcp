@@ -1,14 +1,9 @@
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import {
-  ElicitRequestSchema,
-  type CallToolResult,
-} from '@modelcontextprotocol/sdk/types.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { CallToolResult } from '@modelcontextprotocol/client';
 
 import { DEFAULT_ATTACHMENT_TYPES, type Config } from '../src/config.js';
 import { parseAllowlist } from '../src/recipients.js';
 import { createServer } from '../src/server.js';
-
 import { FakeSmtp } from './fake-smtp.js';
 
 /**
@@ -87,7 +82,7 @@ export async function connect(
 
   if (options.elicit !== undefined) {
     const behaviour = options.elicit;
-    client.setRequestHandler(ElicitRequestSchema, (request) => {
+    client.setRequestHandler('elicitation/create', (request) => {
       const params = request.params as { message?: string };
       // Recorded so a test can assert on exactly what the human was shown —
       // which, for this server, is most of the security argument.

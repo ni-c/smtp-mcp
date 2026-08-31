@@ -7,7 +7,7 @@ import {
   SEND_TOOLS,
 } from '../src/tools/catalogue.js';
 
-import { call, connect, sendArgs, textOf, toolNames } from './harness.js';
+import { call, connect, sendArgs, toolNames } from './harness.js';
 
 /**
  * The catalogue is declared rather than derived, so something has to check it
@@ -39,9 +39,11 @@ describe('the catalogue matches the server', () => {
 
   it('answers a suppressed sending tool with "not found"', async () => {
     const harness = await connect({ config: { allowSend: false } });
-    const result = await call(harness.client, 'send_mail', sendArgs());
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatch(/not found/i);
+    // SDK v2 answers a call to an unknown tool with a JSON-RPC error rather
+    // than a result carrying isError; the tool is still absent entirely.
+    await expect(call(harness.client, 'send_mail', sendArgs())).rejects.toThrow(
+      /not found/i
+    );
     await harness.close();
   });
 });

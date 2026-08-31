@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildToolFilter, ToolFilterError } from '../src/tool-filter.js';
 import { ESSENTIAL_TOOLS, INFO_TOOLS } from '../src/tools/catalogue.js';
 
-import { call, connect, textOf, toolNames } from './harness.js';
+import { call, connect, toolNames } from './harness.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -129,9 +129,11 @@ describe('installToolFilter, end to end', () => {
     expect(await toolNames(harness.client)).not.toContain('forward_mail');
     // "not found", exactly like a tool the send gate never registered — not
     // "disabled", which would be advertising a refusal.
-    const result = await call(harness.client, 'forward_mail', {});
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatch(/not found/i);
+    // SDK v2 answers a call to an unknown tool with a JSON-RPC error rather
+    // than a result carrying isError; the tool is still removed, not disabled.
+    await expect(call(harness.client, 'forward_mail', {})).rejects.toThrow(
+      /not found/i
+    );
     await harness.close();
   });
 

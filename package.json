@@ -51,11 +51,12 @@
     "assets:check": "node scripts/gen-assets.mjs --check"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/server": "^2.0.0",
     "nodemailer": "^9.1.0",
     "zod": "^4.5.4"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^26.4.0",
     "@types/nodemailer": "^8.0.1",

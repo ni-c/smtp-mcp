@@ -20,9 +20,8 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
-
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
+import { Client } from '@modelcontextprotocol/client';
 
 // Same defaults as the compose file, same override. See scripts/sandbox/README.md.
 const SMTP_PORT = process.env.MAILPIT_SMTP_PORT ?? '1025';

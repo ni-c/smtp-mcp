@@ -1,7 +1,4 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
-import { requestApproval } from '../approval.js';
-import { audit } from '../audit.js';
+import type { McpServer, CallToolResult } from '@modelcontextprotocol/server';
 import {
   setResourceKey,
   type ConfirmationDetail,
@@ -13,8 +10,6 @@ import {
   type MailArgs,
   type PreparedMessage,
 } from '../prepare.js';
-import type { RateLimitSlot } from '../ratelimit.js';
-import { jsonResult, run } from '../result.js';
 import {
   attachmentsParam,
   bccParam,
@@ -28,9 +23,13 @@ import {
   subjectParam,
   toParam,
 } from '../schema.js';
-import type { ToolContext } from './context.js';
+import { z } from 'zod';
 
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { requestApproval } from '../approval.js';
+import { audit } from '../audit.js';
+import type { RateLimitSlot } from '../ratelimit.js';
+import { jsonResult, run } from '../result.js';
+import type { ToolContext } from './context.js';
 
 const MAX_SUBJECT = 255;
 
@@ -239,7 +238,7 @@ export function registerSendTools(
         'SMTP_ALLOWED_RECIPIENTS. There is no "from" parameter — the sender is ' +
         'fixed by SMTP_FROM. Use preview_mail first if you want to see the ' +
         'message without sending it.',
-      inputSchema: {
+      inputSchema: z.object({
         to: toParam,
         cc: ccParam,
         bcc: bccParam,
@@ -248,7 +247,7 @@ export function registerSendTools(
         html: htmlParam,
         attachments: attachmentsParam,
         confirm_token: confirmTokenParam,
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true },
     },
     ({ confirm_token, ...args }) =>
@@ -275,7 +274,7 @@ export function registerSendTools(
         "imap-mcp's get_message returns both. The subject is derived from " +
         'original_subject with a single "Re: " unless you override it. Asks ' +
         'the user to confirm, like every sending tool here.',
-      inputSchema: {
+      inputSchema: z.object({
         to: toParam,
         cc: ccParam,
         bcc: bccParam,
@@ -292,7 +291,7 @@ export function registerSendTools(
         references: referencesParam,
         attachments: attachmentsParam,
         confirm_token: confirmTokenParam,
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true },
     },
     ({ confirm_token, original_subject, subject, ...rest }) =>
@@ -320,7 +319,7 @@ export function registerSendTools(
         'altering it. Attachments of the original are not carried over ' +
         'automatically; name them in "attachments" after saving them into ' +
         'SMTP_ATTACHMENT_DIR. Asks the user to confirm.',
-      inputSchema: {
+      inputSchema: z.object({
         to: toParam,
         cc: ccParam,
         bcc: bccParam,
@@ -340,7 +339,7 @@ export function registerSendTools(
         references: referencesParam,
         attachments: attachmentsParam,
         confirm_token: confirmTokenParam,
-      },
+      }),
       annotations: { readOnlyHint: false, destructiveHint: true },
     },
     ({ confirm_token, original_subject, subject, ...rest }) =>
