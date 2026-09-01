@@ -27,6 +27,51 @@ describe('the catalogue matches the server', () => {
     await harness.close();
   });
 
+  it('declares all four annotation hints on every tool', async () => {
+    // Not a style rule. Two of the four default to a *stronger* claim than
+    // silence suggests: the specification gives destructiveHint and
+    // openWorldHint a default of true, so a tool that omits them announces
+    // itself as destructive and open-world. This repository stated the first
+    // two everywhere and left the other two to chance.
+    const harness = await connect({ config: { allowSend: true } });
+    const { tools } = await harness.client.listTools();
+    const hints = [
+      'readOnlyHint',
+      'destructiveHint',
+      'idempotentHint',
+      'openWorldHint',
+    ] as const;
+    for (const tool of tools) {
+      for (const hint of hints) {
+        expect(typeof tool.annotations?.[hint], `${tool.name}.${hint}`).toBe(
+          'boolean'
+        );
+      }
+    }
+    await harness.close();
+  });
+
+  it('says a sent message cannot be sent again for free', async () => {
+    // The one annotation on this server that is an approximation rather than
+    // a fact. Sending destroys nothing; the message is simply gone, into
+    // somebody else's inbox. destructiveHint is the closest the vocabulary
+    // comes, and idempotentHint: false is the exact part — every call sends
+    // another copy, which is why the confirmation is bound to the content.
+    const harness = await connect({ config: { allowSend: true } });
+    const { tools } = await harness.client.listTools();
+    const byName = new Map(tools.map((t) => [t.name, t.annotations]));
+    for (const name of ['send_mail', 'reply_mail', 'forward_mail']) {
+      expect(byName.get(name)?.destructiveHint, name).toBe(true);
+      expect(byName.get(name)?.idempotentHint, name).toBe(false);
+    }
+    // The four that cannot put anything on the wire say the opposite.
+    for (const name of ['preview_mail', 'validate_recipients']) {
+      expect(byName.get(name)?.readOnlyHint, name).toBe(true);
+      expect(byName.get(name)?.destructiveHint, name).toBe(false);
+    }
+    await harness.close();
+  });
+
   it('registers no sending tool until SMTP_ALLOW_SEND is set', async () => {
     // The defining property of this server's default state. Its counterpart
     // imap-mcp asserts that it has no sending tool at all; here the tool exists

@@ -268,7 +268,17 @@ export function registerSendTools(
         attachments: attachmentsParam,
         confirm_token: confirmTokenParam,
       }),
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      annotations: {
+        // Sending is the case these four hints were not designed for. Nothing
+        // is destroyed — and the message is in somebody else's inbox and
+        // cannot be recalled. destructiveHint is the closest the vocabulary
+        // comes to that; the dialog is the real gate. Not idempotent: each
+        // call sends another copy.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
     },
     ({ confirm_token, ...args }, mcp) =>
       run(() =>
@@ -313,7 +323,17 @@ export function registerSendTools(
         attachments: attachmentsParam,
         confirm_token: confirmTokenParam,
       }),
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      annotations: {
+        // Sending is the case these four hints were not designed for. Nothing
+        // is destroyed — and the message is in somebody else's inbox and
+        // cannot be recalled. destructiveHint is the closest the vocabulary
+        // comes to that; the dialog is the real gate. Not idempotent: each
+        // call sends another copy.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
     },
     ({ confirm_token, original_subject, subject, ...rest }, mcp) =>
       run(() =>
@@ -362,7 +382,17 @@ export function registerSendTools(
         attachments: attachmentsParam,
         confirm_token: confirmTokenParam,
       }),
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      annotations: {
+        // Sending is the case these four hints were not designed for. Nothing
+        // is destroyed — and the message is in somebody else's inbox and
+        // cannot be recalled. destructiveHint is the closest the vocabulary
+        // comes to that; the dialog is the real gate. Not idempotent: each
+        // call sends another copy.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
+      },
     },
     ({ confirm_token, original_subject, subject, ...rest }, mcp) =>
       run(() =>

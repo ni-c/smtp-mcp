@@ -16,6 +16,7 @@ import {
 } from '../schema.js';
 
 import { sanitizeText } from '../analyze.js';
+import { READ_ONLY } from './annotations.js';
 import { allowedExtensions } from '../attachments.js';
 import { missingConfigKeys } from '../config.js';
 import { prepareMessage, type PreparedMessage } from '../prepare.js';
@@ -78,7 +79,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         'switched on at all. Call this first: it answers "can I send, and to ' +
         'whom" without touching the network.',
       inputSchema: z.object({}),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     () =>
       run(async () => {
@@ -139,7 +140,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
           .max(100)
           .describe('The email addresses to check.'),
       }),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     ({ addresses }) =>
       run(async () => {
@@ -189,7 +190,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         references: referencesParam,
         attachments: attachmentsParam,
       }),
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     (args) =>
       run(async () => {
@@ -222,7 +223,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         'tell a configuration problem apart from a delivery problem.',
       inputSchema: z.object({}),
       // Nothing changes on the far side: this opens a session and closes it.
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
     },
     () =>
       run(async () => {
