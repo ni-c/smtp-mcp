@@ -1,4 +1,4 @@
-import { internalHostKind } from './hosts.js';
+import { internalHostKind } from 'mcp-internal-hosts';
 import { parseAllowlist, type RecipientRule } from './recipients.js';
 
 /** How the connection to the SMTP server is encrypted. */
