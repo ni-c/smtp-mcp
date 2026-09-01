@@ -47,6 +47,7 @@
     "format": "prettier --write .",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "assets": "svg-asset-set",
     "assets:check": "svg-asset-set --check"
   },
@@ -63,6 +64,7 @@
     "@types/node": "^26.4.0",
     "@types/nodemailer": "^8.0.1",
     "@vitest/coverage-v8": "4.1.11",
+    "mcp-integration-harness": "^0.1.0",
     "oxlint": "^1.80.0",
     "prettier": "^3.9.6",
     "svg-asset-set": "https://github.com/ni-c/svg-asset-set/releases/download/v0.1.0/svg-asset-set-0.1.0.tgz",

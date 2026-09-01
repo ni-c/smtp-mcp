@@ -98,4 +98,4 @@ first send stops and asks, with the recipient and subject on their own labelled
 lines rather than folded into the server's sentence, and the second never gets
 that far because the address is not on the allowlist. The recording is
 reproducible — `docs/demo.tape` drives the built server against the Mailpit
-sandbox in `scripts/sandbox/`, and no real address appears in it.
+sandbox in `test/integration/`, and no real address appears in it.

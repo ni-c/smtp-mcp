@@ -248,13 +248,13 @@ npm test
 npm run build
 ```
 
-There is a throwaway Mailpit sandbox in [`scripts/sandbox/`](scripts/sandbox/README.md). Develop
+There is a throwaway Mailpit sandbox in `test/integration/`. Develop
 against it rather than a real mailbox: this server's job is to put messages on the wire, and a
 test run that goes wrong sends real mail to real people.
 
 ```sh
-docker compose -f scripts/sandbox/docker-compose.yml up -d
-npm run build && node scripts/sandbox/smoke.mjs
+docker compose -f test/integration/compose.yml up -d --wait
+npm run build && npm run test:integration
 ```
 
 ## Releasing

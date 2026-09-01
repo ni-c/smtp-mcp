@@ -1,0 +1,234 @@
+import {
+  expectEveryToolExercised,
+  startServer,
+  toolCoverage,
+  tokenOf,
+  type LiveHarness,
+} from 'mcp-integration-harness';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+import { ALL_TOOLS } from '../../src/tools/catalogue.js';
+import { bootstrap, delivered, inbox, raw, type Sandbox } from './bootstrap.js';
+
+/**
+ * Every tool in the catalogue, against a real SMTP server in Docker.
+ *
+ * Ported from `scripts/sandbox/smoke.mjs`, which did all of this correctly —
+ * exit code included — and which nothing ran.
+ *
+ * The gap it closes is specific. Everything in `test/` runs against an
+ * in-memory fake, which is the right trade for a unit suite and proves nothing
+ * about MIME encoding, the SMTP dialogue or the envelope. Here a message is
+ * composed by the tools, carried over a real SMTP connection, and then read
+ * back out of Mailpit — so every assertion is about what *arrived*, not about
+ * what the tool said it did.
+ */
+
+let sandbox: Sandbox;
+/** Declares elicitation, so guarded tools go through the real dialog. */
+let asking: LiveHarness;
+/** Declares none, so the same tools fall back to the two-call token. */
+let plain: LiveHarness;
+
+const SUBJECT = 'smtp-mcp integration suite';
+
+function parse<T>(text: string): T {
+  const start = text.indexOf('{');
+  if (start === -1) throw new Error(`no JSON in result: ${text.slice(0, 300)}`);
+  return JSON.parse(text.slice(start)) as T;
+}
+
+/** The message the send tests compose, reused so the preview matches the send. */
+const MAIL = {
+  to: ['anna@example.net'],
+  cc: ['carol@example.net'],
+  bcc: ['hidden@example.net'],
+  subject: SUBJECT,
+  body: 'Integration body.',
+  html:
+    '<p>Integration body.</p><script>steal()</script>' +
+    '<img src="https://tracker.example/p.gif">',
+  attachments: ['report.pdf'],
+};
+
+interface Sent {
+  sent: boolean;
+  accepted: string[];
+  message_id: string;
+}
+
+let sent: Sent;
+
+beforeAll(async () => {
+  sandbox = await bootstrap();
+  asking = await startServer({ env: sandbox.env, elicit: 'accept' });
+  plain = await startServer({ env: sandbox.env });
+}, 600_000);
+
+afterAll(async () => {
+  await asking?.close();
+  await plain?.close();
+});
+
+describe('the connection', () => {
+  it('reports how the server is configured', async () => {
+    const info = await asking.call('get_server_info');
+    expect(info).toContain('127.0.0.1');
+    expect(info).toContain('"sending_enabled": true');
+    // The password must not come back out, on a tool whose whole job is to
+    // describe the configuration and which a model will call first.
+    expect(info).not.toContain('the-password-must-never-be-echoed');
+  });
+
+  it('reaches the SMTP server without sending anything', async () => {
+    const result = parse<{ reachable: boolean }>(
+      await asking.call('test_connection')
+    );
+    expect(result.reachable).toBe(true);
+    expect((await inbox(sandbox.api)).messages_count).toBe(0);
+  });
+
+  it('checks recipients against the allowlist without sending', async () => {
+    const checked = await asking.call('validate_recipients', {
+      addresses: ['anna@example.net', 'stranger@evil.example'],
+    });
+    expect(checked).toContain('anna@example.net');
+    expect(checked).toContain('stranger@evil.example');
+    expect((await inbox(sandbox.api)).messages_count).toBe(0);
+  });
+});
+
+describe('the allowlist', () => {
+  it('refuses a recipient outside it, and names the variable', async () => {
+    const refused = await asking.call(
+      'send_mail',
+      {
+        to: ['stranger@evil.example'],
+        subject: SUBJECT,
+        body: 'This must not go out.',
+      },
+      { expectError: true }
+    );
+    expect(refused).toContain('SMTP_ALLOWED_RECIPIENTS');
+    expect((await inbox(sandbox.api)).messages_count).toBe(0);
+  });
+});
+
+describe('the preview', () => {
+  it('shows what would be sent, and sends nothing', async () => {
+    const preview = await asking.call('preview_mail', MAIL);
+    expect(preview).toContain('From: Sandbox');
+    expect(preview).toContain('X-Mailer: smtp-mcp/');
+    // The sanitiser's work, visible before anything is committed.
+    expect(preview).toContain('<script> element');
+    // The Bcc is not in the header block: that is the whole point of a Bcc,
+    // and a preview that leaked it would teach the wrong thing.
+    expect(preview.split('--- text/plain ---')[0]).not.toContain(
+      'hidden@example.net'
+    );
+    expect((await inbox(sandbox.api)).messages_count).toBe(0);
+  });
+});
+
+describe('sending, and what actually arrived', () => {
+  it('sends only on the second call', async () => {
+    const first = await plain.call('send_mail', MAIL);
+    expect(first).toContain('confirm_token');
+    // The first call is a question. Nothing left the process.
+    expect((await inbox(sandbox.api)).messages_count).toBe(0);
+
+    sent = parse<Sent>(
+      await plain.call('send_mail', { ...MAIL, confirm_token: tokenOf(first) })
+    );
+    expect(sent.sent).toBe(true);
+    // To, Cc and Bcc: three envelope recipients from one call.
+    expect(sent.accepted).toHaveLength(3);
+  });
+
+  it('delivers what was composed', async () => {
+    const list = await inbox(sandbox.api);
+    expect(list.messages_count).toBe(1);
+    const id = list.messages[0]!.ID;
+    const message = await delivered(sandbox.api, id);
+    const wire = await raw(sandbox.api, id);
+
+    expect(message.Subject).toBe(SUBJECT);
+    expect(message.From.Address).toBe('sandbox@example.net');
+    expect(message.To).toHaveLength(1);
+    expect(message.Cc).toHaveLength(1);
+
+    // The Bcc recipient got it, and is in neither To nor Cc. Mailpit's /raw
+    // cannot answer this — see the note on `raw` in bootstrap.ts — so the
+    // observable consequence is what is asserted.
+    expect(sent.accepted).toContain('hidden@example.net');
+    expect([...message.To, ...message.Cc].map((a) => a.Address)).not.toContain(
+      'hidden@example.net'
+    );
+
+    expect(wire).toContain(sent.message_id);
+    expect(wire).toMatch(/^X-Mailer: smtp-mcp\//m);
+    expect(message.Text).toContain('Sent from the smtp-mcp integration suite');
+
+    // Neither survived the sanitiser, and this is the only place that can be
+    // checked on the bytes that were actually transmitted.
+    expect(wire).not.toContain('tracker.example');
+    expect(wire).not.toContain('steal()');
+
+    expect(message.Attachments).toHaveLength(1);
+    expect(message.Attachments[0]!.FileName).toBe('report.pdf');
+    expect(message.Attachments[0]!.ContentType).toBe('application/pdf');
+  });
+});
+
+describe('threading', () => {
+  it('replies under the original', async () => {
+    await plain.confirmed('reply_mail', {
+      to: ['anna@example.net'],
+      original_subject: SUBJECT,
+      body: 'Thanks.',
+      quote: 'Integration body.',
+      in_reply_to: sent.message_id,
+      references: [sent.message_id],
+    });
+
+    const list = await inbox(sandbox.api);
+    const reply = list.messages.find((m) => m.Subject.startsWith('Re: '));
+    expect(reply).toBeDefined();
+
+    const wire = await raw(sandbox.api, reply!.ID);
+    expect(wire).toContain(`In-Reply-To: ${sent.message_id}`);
+    // The quoted original is prefixed, so a reader can tell the two apart.
+    expect(wire).toContain('> Integration body.');
+  });
+
+  it('forwards, carrying the original along', async () => {
+    await asking.call('forward_mail', {
+      to: ['bob@example.net'],
+      original_subject: SUBJECT,
+      body: 'Passing this on.',
+      quote: 'Integration body.',
+    });
+
+    const list = await inbox(sandbox.api);
+    const forwarded = list.messages.find((m) => m.Subject.startsWith('Fwd: '));
+    expect(forwarded).toBeDefined();
+
+    const message = await delivered(sandbox.api, forwarded!.ID);
+    expect(message.To.map((a) => a.Address)).toContain('bob@example.net');
+    expect(message.Text).toContain('Integration body.');
+  });
+
+  it('asked a person on one harness and nobody on the other', () => {
+    expect(asking.prompts.length).toBeGreaterThan(0);
+    expect(plain.prompts).toHaveLength(0);
+  });
+});
+
+it('exercises every tool in the catalogue', () => {
+  const called = new Set([...asking.called, ...plain.called]);
+  const report = toolCoverage({ called }, ALL_TOOLS, {});
+  console.log(
+    `smtp-mcp: ${report.called.length}/${ALL_TOOLS.length} tools against a real SMTP server`
+  );
+  expectEveryToolExercised({ called }, ALL_TOOLS, {});
+});
