@@ -43,4 +43,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A throwaway Mailpit sandbox in `scripts/sandbox/`, with an end-to-end smoke script that sends
   through a real SMTP server and reads the message back to check what actually arrived.
 
+### Notes
+
+This version has not been released, so the entries above describe the server as it stands rather
+than as a set of changes. Two things about how it is built are worth recording here anyway,
+because they are visible in the dependency tree:
+
+- The tool filter, the confirmation store, the approval flow, the host classifier and the
+  documentation-asset generator come from **`mcp-tool-allowlist`**, **`mcp-approval`**,
+  **`mcp-internal-hosts`** and **`svg-asset-set`** rather than from copies kept here. The
+  approval flow in particular was written here and in imap-mcp, and became a library once the
+  two had grown near-identical copies of it. None of the packages has a runtime dependency of
+  its own, so this makes the tree smaller rather than larger.
+
+- The server runs on **MCP SDK 2.0** and is built with **oxlint** and **TypeScript 7**.
+
+One behaviour follows from the first of those and is worth stating plainly, because it concerns
+the gate in front of sending: a `confirm_token` that does not match the exact message is refused
+with the reason rather than answered with a fresh prompt. The binding is unchanged — a token
+issued for one recipient list or one body cannot spend itself on another — and nothing is sent
+either way.
+
 <!-- #endregion changelog -->
