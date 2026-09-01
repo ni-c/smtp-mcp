@@ -6,6 +6,7 @@ import { FakeSmtp } from './fake-smtp.js';
 import {
   call,
   connect,
+  connectModern,
   jsonOf,
   sendArgs,
   textOf,
@@ -124,8 +125,8 @@ describe('send_mail, the elicitation dialog', () => {
     await harness.close();
   });
 
-  for (const behaviour of ['decline', 'cancel', 'error'] as const) {
-    it(`sends nothing when the dialog ${behaviour}s, and says so`, async () => {
+  for (const behaviour of ['decline', 'cancel'] as const) {
+    it(`sends nothing when the dialog is ${behaviour}d, and says so`, async () => {
       const smtp = new FakeSmtp();
       const harness = await connect({
         config: { allowSend: true },
@@ -139,6 +140,28 @@ describe('send_mail, the elicitation dialog', () => {
       await harness.close();
     });
   }
+
+  it('sends nothing when the dialog cannot be shown at all', async () => {
+    // A client that accepts the request and then fails it -- a timeout, a
+    // dropped connection, a broken dialog -- is nobody saying yes.
+    //
+    // The wording is the SDK's here, not ours: the question is a RETURN value
+    // now, so by the time the round trip fails this handler has finished and
+    // the seam is the only thing left to answer. It reports the failure rather
+    // than our "Nothing was sent". What has to hold is that it is an error and
+    // that the message did not go out, and both do.
+    const smtp = new FakeSmtp();
+    const harness = await connect({
+      config: { allowSend: true },
+      smtp,
+      elicit: 'error',
+    });
+    const result = await call(harness.client, 'send_mail', sendArgs());
+    expect(smtp.delivered).toHaveLength(0);
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/dialog unavailable/);
+    await harness.close();
+  });
 
   it('shows the recipients and subject on their own labelled lines', async () => {
     // Never interpolated into the server's sentence: a subject written to read
@@ -576,6 +599,90 @@ describe('the approval is bound to the attachment bytes', () => {
       })
     );
     expect(harness.smtp.delivered).toHaveLength(1);
+    await harness.close();
+  });
+});
+
+describe('send_mail on the 2026-07-28 revision', () => {
+  // Here the question is a RETURN value: the call ends, the person decides, and
+  // the client retries carrying the answer. Which means the answer arrives as
+  // ordinary request content -- attacker-controlled input, in the SDK's own
+  // words -- so an accepted reply on its own must not be enough to send mail.
+
+  const accepted = {
+    confirm: { action: 'accept', content: { confirm: true } },
+  };
+
+  it('asks, then sends once the answer comes back with the state it minted', async () => {
+    const harness = await connectModern({ config: { allowSend: true } });
+    const asked = await harness.send(sendArgs());
+    expect(asked.resultType).toBe('input_required');
+    expect(asked.requestState).toBeTruthy();
+    expect(asked.inputRequests?.confirm?.params.message).toMatch(
+      /cannot be recalled/
+    );
+    expect(harness.smtp.delivered).toHaveLength(0);
+
+    const done = await harness.send(sendArgs(), {
+      inputResponses: accepted,
+      requestState: asked.requestState,
+    });
+    expect(done.resultType).not.toBe('input_required');
+    expect(harness.smtp.delivered).toHaveLength(1);
+    await harness.close();
+  });
+
+  it('sends nothing when the box was left unticked', async () => {
+    const harness = await connectModern({ config: { allowSend: true } });
+    const asked = await harness.send(sendArgs());
+    const done = await harness.send(sendArgs(), {
+      inputResponses: {
+        confirm: { action: 'accept', content: { confirm: false } },
+      },
+      requestState: asked.requestState,
+    });
+    expect(done.isError).toBe(true);
+    expect(textOf(done as never)).toMatch(/declined/);
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('asks again rather than sending when the answer carries no state', async () => {
+    // The whole point of asking a human: without a seal this bare object would
+    // be all it took to send mail, and anything that can shape a tool call can
+    // produce it.
+    const harness = await connectModern({ config: { allowSend: true } });
+    await harness.send(sendArgs());
+    const again = await harness.send(sendArgs(), { inputResponses: accepted });
+    expect(again.resultType).toBe('input_required');
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('asks again when the state was not minted here', async () => {
+    const harness = await connectModern({ config: { allowSend: true } });
+    const asked = await harness.send(sendArgs());
+    const forged = `${asked.requestState?.slice(0, -4)}AAAA`;
+    const again = await harness.send(sendArgs(), {
+      inputResponses: accepted,
+      requestState: forged,
+    });
+    expect(again.resultType).toBe('input_required');
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('asks again when the state belongs to a different message', async () => {
+    // The seal names the exact recipients, subject and attachments that were
+    // approved. Approval of one message is not approval of another.
+    const harness = await connectModern({ config: { allowSend: true } });
+    const asked = await harness.send(sendArgs({ subject: 'the one they saw' }));
+    const again = await harness.send(sendArgs({ subject: 'a different one' }), {
+      inputResponses: accepted,
+      requestState: asked.requestState,
+    });
+    expect(again.resultType).toBe('input_required');
+    expect(harness.smtp.delivered).toHaveLength(0);
     await harness.close();
   });
 });

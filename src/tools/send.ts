@@ -1,4 +1,9 @@
-import type { McpServer, CallToolResult } from '@modelcontextprotocol/server';
+import type {
+  McpServer,
+  CallToolResult,
+  InputRequiredResult,
+  ServerContext,
+} from '@modelcontextprotocol/server';
 import {
   setResourceKey,
   type ConfirmationDetail,
@@ -80,19 +85,21 @@ function listFor(addresses: readonly string[]): string {
  */
 async function performSend(
   server: McpServer,
+  mcp: ServerContext,
   ctx: ToolContext,
   confirmations: ConfirmationStore,
   tool: string,
   verb: string,
   args: MailArgs,
   confirmToken: string | undefined
-): Promise<CallToolResult> {
+): Promise<CallToolResult | InputRequiredResult> {
   const prepared = await prepareMessage(args, ctx.config, ctx.version);
 
   const slot = ctx.limiter.reserve();
   try {
     return await withSlot(
       server,
+      mcp,
       ctx,
       confirmations,
       tool,
@@ -110,6 +117,7 @@ async function performSend(
 
 async function withSlot(
   server: McpServer,
+  mcp: ServerContext,
   ctx: ToolContext,
   confirmations: ConfirmationStore,
   tool: string,
@@ -118,7 +126,7 @@ async function withSlot(
   confirmToken: string | undefined,
   prepared: PreparedMessage,
   slot: RateLimitSlot
-): Promise<CallToolResult> {
+): Promise<CallToolResult | InputRequiredResult> {
   const details: ConfirmationDetail[] = [
     {
       label: 'From (fixed by SMTP_FROM)',
@@ -167,7 +175,7 @@ async function withSlot(
       `${prepared.composed.htmlRemoved.join(', ')}.`;
   }
 
-  const approval = await requestApproval(server, confirmations, {
+  const approval = await requestApproval(server, mcp, confirmations, {
     what: `${verb} to ${prepared.composed.envelope.to.length} recipient(s)`,
     consequence,
     resourceKey: setResourceKey(tool, messageFingerprint(args, prepared)),
@@ -250,10 +258,11 @@ export function registerSendTools(
       }),
       annotations: { readOnlyHint: false, destructiveHint: true },
     },
-    ({ confirm_token, ...args }) =>
+    ({ confirm_token, ...args }, mcp) =>
       run(() =>
         performSend(
           server,
+          mcp,
           ctx,
           confirmations,
           'send_mail',
@@ -294,10 +303,11 @@ export function registerSendTools(
       }),
       annotations: { readOnlyHint: false, destructiveHint: true },
     },
-    ({ confirm_token, original_subject, subject, ...rest }) =>
+    ({ confirm_token, original_subject, subject, ...rest }, mcp) =>
       run(() =>
         performSend(
           server,
+          mcp,
           ctx,
           confirmations,
           'reply_mail',
@@ -342,10 +352,11 @@ export function registerSendTools(
       }),
       annotations: { readOnlyHint: false, destructiveHint: true },
     },
-    ({ confirm_token, original_subject, subject, ...rest }) =>
+    ({ confirm_token, original_subject, subject, ...rest }, mcp) =>
       run(() =>
         performSend(
           server,
+          mcp,
           ctx,
           confirmations,
           'forward_mail',

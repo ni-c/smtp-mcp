@@ -1,4 +1,10 @@
-import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import {
+  Client,
+  InMemoryTransport,
+  withInputRequired,
+} from '@modelcontextprotocol/client';
+import { CallToolResultSchema } from '@modelcontextprotocol/core';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import type { CallToolResult } from '@modelcontextprotocol/client';
 
 import { DEFAULT_ATTACHMENT_TYPES, type Config } from '../src/config.js';
@@ -157,5 +163,75 @@ export function sendArgs(
     subject: 'Quarterly report',
     body: 'Here it is.',
     ...overrides,
+  };
+}
+
+export interface ModernHarness {
+  client: Client;
+  smtp: FakeSmtp;
+  /** One `send_mail` leg, carrying whatever the previous one asked for. */
+  send(
+    args: Record<string, unknown>,
+    extra?: Record<string, unknown>
+  ): Promise<InputRequiredView>;
+  close(): Promise<void>;
+}
+
+/** Enough of a result to tell a question from an answer. */
+export interface InputRequiredView {
+  resultType?: string;
+  requestState?: string;
+  inputRequests?: Record<string, { params: { message: string } }>;
+  content?: Array<{ type: string; text?: string }>;
+  isError?: boolean;
+}
+
+/**
+ * The server on the 2026-07-28 revision, with the round trip left to the test.
+ *
+ * `connect()` above wires the transport by hand, which pins the connection to
+ * the 2025 era — there the SDK's legacy shim answers the question in-process
+ * and a test never sees it. serveStdio owns the era decision, and
+ * `autoFulfill: false` keeps the client from answering on the user's behalf, so
+ * a test can hand back exactly what it wants to hand back: the right answer,
+ * no state, or somebody else's.
+ */
+export async function connectModern(
+  options: { config?: Partial<Config>; smtp?: FakeSmtp } = {}
+): Promise<ModernHarness> {
+  const smtp = options.smtp ?? new FakeSmtp();
+  const config = testConfig(options.config ?? {});
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const handle = serveStdio(
+    () => createServer(config, { smtpFactory: () => smtp }),
+    { transport: serverTransport }
+  );
+  const client = new Client(
+    { name: 'test', version: '0.0.0' },
+    {
+      capabilities: { elicitation: { form: {} } },
+      versionNegotiation: { mode: 'auto' },
+      inputRequired: { autoFulfill: false },
+    }
+  );
+  await client.connect(clientTransport);
+
+  return {
+    client,
+    smtp,
+    send: async (args, extra = {}) =>
+      (await client.request(
+        {
+          method: 'tools/call',
+          params: { name: 'send_mail', arguments: args, ...extra },
+        },
+        withInputRequired(CallToolResultSchema),
+        { allowInputRequired: true }
+      )) as InputRequiredView,
+    close: async () => {
+      await client.close();
+      await handle.close();
+    },
   };
 }
