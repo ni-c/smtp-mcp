@@ -5,7 +5,9 @@ import type { Config } from './config.js';
 import { ConfirmationStore } from './confirm.js';
 import { RateLimiter } from './ratelimit.js';
 import { SmtpClient, type SmtpClientFactory } from './smtp.js';
-import { buildToolFilter, installToolFilter } from './tool-filter.js';
+import { buildToolFilter, installToolFilter } from 'mcp-tool-allowlist';
+
+import { ALL_TOOLS, ESSENTIAL_TOOLS, INFO_TOOLS } from './tools/catalogue.js';
 import { registerInfoTools } from './tools/info.js';
 import { registerSendTools } from './tools/send.js';
 
@@ -50,7 +52,29 @@ export interface ServerDeps {
 export function createServer(config: Config, deps: ServerDeps = {}): McpServer {
   // Before anything is built: an unusable tool list should fail on the way in,
   // not leave a server running with tools quietly missing.
-  const filter = buildToolFilter(config);
+  const filter = buildToolFilter({
+    allowTools: config.allowTools,
+    denyTools: config.denyTools,
+    catalogue: {
+      all: ALL_TOOLS,
+      essential: ESSENTIAL_TOOLS,
+      ungated: INFO_TOOLS,
+    },
+    names: {
+      allow: 'SMTP_ALLOW_TOOLS',
+      deny: 'SMTP_DENY_TOOLS',
+      server: 'smtp-mcp',
+    },
+    // The gate here is a send switch rather than a read-only one, which is the
+    // whole reason `gate` is a parameter: the shape is identical — a subset that
+    // is not registered but stays in the catalogue, so a name from that half is
+    // answered with "suppressed" and never with "no such tool".
+    gate: {
+      closed: !config.allowSend,
+      variable: 'SMTP_ALLOW_SEND',
+      noun: 'the send gate',
+    },
+  });
 
   const client =
     deps.smtpFactory === undefined
