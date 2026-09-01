@@ -27,6 +27,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   startup rather than treated as "anyone"; allowing everyone is spelled `*`.
 - Every send asks a human through MCP elicitation, falling back to a two-call token bound to a
   fingerprint of the recipients _and_ the content.
+  `ELICITATION=false` takes that fallback deliberately, for a deployment where a dialog is the
+  wrong shape rather than an unwanted one — it never removes the guard, the fallback text then
+  names this server rather than blaming the client, and a server started with it off says so on
+  one startup line. The variable carries no prefix on purpose, so one export reaches every MCP
+  server in the environment; this is the one where that costs the most. A value that is neither
+  `true` nor `false` stops the server, like `SMTP_TLS` and unlike `SMTP_ALLOW_SEND`, because it
+  is the only variable here that defaults to on.
 - The sender is fixed by `SMTP_FROM`. There is no `from` parameter.
 - Hourly send cap (`SMTP_MAX_SENDS_PER_HOUR`) and a per-message recipient cap
   (`SMTP_MAX_RECIPIENTS`).

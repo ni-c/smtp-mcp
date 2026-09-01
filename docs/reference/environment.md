@@ -29,6 +29,7 @@ with setup instructions instead of reaching a server.
 | `SMTP_ALLOW_TOOLS` | no | `string` | Comma-separated tool names, a prefix with one trailing *, or "essential" for the curated preset. |
 | `SMTP_DENY_TOOLS` | no | `string` | Comma-separated tool names or prefixes to remove, applied after SMTP_ALLOW_TOOLS. |
 | `SMTP_INSECURE_TLS` | no | `boolean` | Set to "true" to accept self-signed certificates. Prefer a proper internal CA. |
+| `ELICITATION` | no | `boolean` | `false` replaces the approval dialog with the two-call token. Default `true`. **Not prefixed.** |
 
 ## The two that differ from the rest of the family
 
@@ -55,3 +56,22 @@ looks like it is running and is not doing what its operator believes:
 
 Error messages never echo the offending value. Configuration errors end up in logs, and the
 "not a valid port" branch is precisely where a token pasted into the wrong variable arrives.
+
+## `ELICITATION`
+
+Whether a client that *can* show a dialog is asked before `send_mail`, `reply_mail` or
+`forward_mail` acts. Default `true`. `false` takes the two-call-token path instead — it does
+not remove the guard, and a server started with it off prints one line saying so.
+
+Two ways it differs from every other variable here:
+
+- **No prefix.** One `export ELICITATION=false` reaches every MCP server in the same
+  environment, not just this one. That is the point of it and also its risk, and this is the
+  server where it costs the most: every send asks. See [Asking a person](/guide/approval).
+- **Fatal on anything else.** Like `SMTP_TLS`, and unlike `SMTP_ALLOW_SEND`: `1`, `off` or a
+  typo stop the server with exit code 1. It is the only variable here that defaults to *on*,
+  and a typo that fell back would leave the dialog running while you believed it was off.
+
+Values are trimmed and matched case-insensitively. It is read *after* `SMTP_PASSWORD` is
+deleted from `process.env`, so the fatal path cannot leave the password sitting there for a
+crash reporter.

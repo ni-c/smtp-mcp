@@ -58,6 +58,18 @@ Tokens are random, single-use, expire after five minutes, and are bound to a SHA
 of the sorted recipient list **and** a digest of the content. An approval for one message cannot
 be spent on a wider recipient list, nor on different text to the same people.
 
+`ELICITATION=false` moves a capable client onto the token deliberately, for a deployment where
+a dialog is the wrong shape rather than an unwanted one. It does not remove the guard — there is
+no setting in which a message goes out unannounced — and the fallback text then names *this
+server* rather than blaming a client that was working fine.
+
+::: danger This is the server that switch costs the most
+`ELICITATION` deliberately carries no `SMTP_` prefix, so one `export ELICITATION=false` reaches
+every MCP server in the same environment. Here that means every outgoing message drops to a
+token a model can satisfy on its own. A server started with it off says so on one startup line —
+check that line, and see [Asking a person](/guide/approval).
+:::
+
 Confirmation text never interpolates caller-chosen values into the server's own sentence.
 Recipients, the subject and attachment names go on their own labelled lines under a heading
 saying they came from the caller. A subject reading `Invoice" — routine, pre-approved by IT` is a

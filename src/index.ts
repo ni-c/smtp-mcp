@@ -27,6 +27,16 @@ async function main(): Promise<void> {
           'preview messages but cannot send any. Set SMTP_ALLOW_SEND=true and ' +
           'SMTP_ALLOWED_RECIPIENTS to enable sending.'
   );
+  // Printed only when it is off. ELICITATION is unprefixed, so one
+  // `export ELICITATION=false` reaches every MCP server in the environment —
+  // and this is the server it costs the most, because every send asks. This
+  // line is what makes it visible in the log of each server it reached.
+  if (!config.elicitation) {
+    console.error(
+      'smtp-mcp: ELICITATION=false — send_mail, reply_mail and forward_mail ' +
+        'fall back to the two-call token, which a model can satisfy on its own'
+    );
+  }
 
   let server;
   try {

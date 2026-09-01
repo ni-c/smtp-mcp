@@ -95,6 +95,7 @@ message they wrote.
 | `SMTP_ALLOW_TOOLS`          | no                          | —                            | Tool names, a prefix with one trailing `*`, or `essential`.                           |
 | `SMTP_DENY_TOOLS`           | no                          | —                            | Removed after `SMTP_ALLOW_TOOLS` is applied.                                          |
 | `SMTP_INSECURE_TLS`         | no                          | `false`                      | Accept self-signed certificates.                                                      |
+| `ELICITATION`               | no                          | `true`                       | `false` replaces the approval dialog with the two-call token. **Not prefixed.**       |
 
 Two defaults are worth reading twice, because they are the opposite of what the rest of this
 family does:

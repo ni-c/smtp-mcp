@@ -169,6 +169,42 @@ describe('send_mail, the elicitation dialog', () => {
     await harness.close();
   });
 
+  it('takes the switch off the dialog and onto the token', async () => {
+    // ELICITATION=false is not "no confirmation": the same client that would
+    // have been asked gets the token instead, and nothing is sent until it
+    // comes back. This is the server where that switch costs the most, so the
+    // fallback text names it rather than blaming the client.
+    const smtp = new FakeSmtp();
+    const harness = await connect({
+      config: { allowSend: true, elicitation: false },
+      smtp,
+      elicit: 'accept',
+    });
+    const first = await call(harness.client, 'send_mail', sendArgs());
+    expect(harness.prompts).toHaveLength(0);
+    expect(smtp.delivered).toHaveLength(0);
+    expect(textOf(first)).toContain('confirm_token=');
+    expect(textOf(first)).toContain('switched off');
+    expect(textOf(first)).not.toContain('cannot ask the user directly');
+    await harness.close();
+  });
+
+  it('is the only thing that changed: the same client is asked by default', async () => {
+    // The counter-check. Without it "switchable" is a claim about a flag, not
+    // about behaviour.
+    const smtp = new FakeSmtp();
+    const harness = await connect({
+      config: { allowSend: true },
+      smtp,
+      elicit: 'accept',
+    });
+    const result = await call(harness.client, 'send_mail', sendArgs());
+    expect(harness.prompts).toHaveLength(1);
+    expect(textOf(result)).not.toContain('confirm_token=');
+    expect(smtp.delivered).toHaveLength(1);
+    await harness.close();
+  });
+
   it('shows the recipients and subject on their own labelled lines', async () => {
     // Never interpolated into the server's sentence: a subject written to read
     // like an instruction must not become part of what the server says.

@@ -36,6 +36,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
       ...overrides.smtp,
     },
     allowSend: overrides.allowSend ?? false,
+    elicitation: overrides.elicitation ?? true,
     allowedRecipients:
       overrides.allowedRecipients ?? parseAllowlist(allowedRecipientsRaw),
     allowedRecipientsRaw,

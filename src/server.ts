@@ -88,7 +88,10 @@ export function createServer(config: Config, deps: ServerDeps = {}): McpServer {
     limiter: new RateLimiter(config.maxSendsPerHour),
     // One approver per server: it holds the key that seals the request state
     // carried out through the client and back.
-    approval: createApproval({ server: 'smtp-mcp' }),
+    approval: createApproval({
+      server: 'smtp-mcp',
+      elicitation: config.elicitation,
+    }),
     version,
   };
 
