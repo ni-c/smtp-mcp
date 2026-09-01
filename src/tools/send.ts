@@ -4,11 +4,8 @@ import type {
   InputRequiredResult,
   ServerContext,
 } from '@modelcontextprotocol/server';
-import {
-  setResourceKey,
-  type ConfirmationDetail,
-  type ConfirmationStore,
-} from '../confirm.js';
+import { setResourceKey } from 'mcp-approval';
+import type { ConfirmationDetail, ConfirmationStore } from 'mcp-approval';
 import {
   messageFingerprint,
   prepareMessage,
@@ -30,9 +27,9 @@ import {
 } from '../schema.js';
 import { z } from 'zod';
 
-import { requestApproval } from '../approval.js';
 import { audit } from '../audit.js';
 import type { RateLimitSlot } from '../ratelimit.js';
+import { ToolInputError } from '../errors.js';
 import { jsonResult, run } from '../result.js';
 import type { ToolContext } from './context.js';
 
@@ -175,21 +172,36 @@ async function withSlot(
       `${prepared.composed.htmlRemoved.join(', ')}.`;
   }
 
-  const approval = await requestApproval(server, mcp, confirmations, {
-    what: `${verb} to ${prepared.composed.envelope.to.length} recipient(s)`,
-    consequence,
-    resourceKey: setResourceKey(tool, messageFingerprint(args, prepared)),
-    token: confirmToken,
-    details,
-  });
-  if (!approval.approved) {
-    // Asked and not answered yet, or declined. Either way nothing left the
-    // building, so the slot goes back.
+  const outcome = await ctx.approval.requestApproval(
+    server,
+    mcp,
+    confirmations,
+    {
+      what: `${verb} to ${prepared.composed.envelope.to.length} recipient(s)`,
+      consequence,
+      resourceKey: setResourceKey(tool, messageFingerprint(args, prepared)),
+      token: confirmToken,
+      toolName: tool,
+      details,
+    }
+  );
+  if (outcome.decision !== 'approved') {
+    // Asked and not answered yet, refused, or declined. Either way nothing left
+    // the building, so the slot goes back. The caller's catch would release it
+    // for the two that throw, but releasing here keeps all four in one place.
     slot.release();
-    return approval.result;
+    if (outcome.decision === 'rejected') {
+      throw new ToolInputError(`smtp-mcp: ${outcome.reason}`);
+    }
+    if (outcome.decision === 'declined') {
+      throw new ToolInputError(
+        'smtp-mcp: the user declined. Nothing was sent.'
+      );
+    }
+    return outcome.result;
   }
 
-  const outcome = await ctx.client.send({
+  const sent = await ctx.client.send({
     envelope: prepared.composed.envelope,
     raw: prepared.composed.raw,
   });
@@ -209,8 +221,8 @@ async function withSlot(
         prepared.attachments.length > 0
           ? prepared.attachments.map((a) => a.filename)
           : undefined,
-      accepted: outcome.accepted.length,
-      rejected: outcome.rejected.length > 0 ? outcome.rejected : undefined,
+      accepted: sent.accepted.length,
+      rejected: sent.rejected.length > 0 ? sent.rejected : undefined,
     },
     ctx.config.auditLog
   );
@@ -218,12 +230,12 @@ async function withSlot(
   return jsonResult({
     sent: true,
     message_id: prepared.composed.messageId,
-    accepted: outcome.accepted,
-    rejected: outcome.rejected,
+    accepted: sent.accepted,
+    rejected: sent.rejected,
     bytes: prepared.composed.bytes,
     sends_remaining_this_hour: ctx.limiter.remaining(),
     note:
-      outcome.rejected.length === 0
+      sent.rejected.length === 0
         ? 'The SMTP server accepted the message. It cannot be recalled.'
         : 'The SMTP server accepted the message for some recipients and ' +
           'refused others — see "rejected". Those people did not receive it.',

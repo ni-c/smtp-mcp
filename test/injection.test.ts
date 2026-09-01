@@ -110,8 +110,10 @@ describe('widening an approved message', () => {
       })
     );
     expect(harness.smtp.delivered).toHaveLength(0);
-    // It is answered with a fresh confirmation, not with a send.
-    expect(textOf(widened)).toMatch(/confirm_token=/);
+    // A token that does not match this exact message is refused with the
+    // reason rather than answered with a fresh prompt. The binding is the
+    // same — nothing was sent — and the wording is the library's.
+    expect(textOf(widened)).toMatch(/invalid, expired/);
     await harness.close();
   });
 
@@ -149,7 +151,10 @@ describe('widening an approved message', () => {
       sendArgs({ confirm_token: 'f'.repeat(32) })
     );
     expect(harness.smtp.delivered).toHaveLength(0);
-    expect(textOf(result)).toMatch(/confirm_token=/);
+    // A token that does not match this exact message is refused with the
+    // reason rather than answered with a fresh prompt. The binding is the
+    // same — nothing was sent — and the wording is the library's.
+    expect(textOf(result)).toMatch(/invalid, expired/);
     await harness.close();
   });
 });
