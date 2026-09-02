@@ -404,6 +404,119 @@ describe('the rate limit', () => {
   });
 });
 
+describe('at most once', () => {
+  // An approval proves that a person agreed to this message. It does not prove
+  // they agreed to it twice: `mcp-approval` says in its own SECURITY.md that
+  // the sealed state binds an answer to a question and stays redeemable until
+  // it expires. Every other guarded operation in this family is idempotent and
+  // does not care. A second send reaches a person and cannot be recalled.
+
+  it('sends one copy even when the dialog says yes twice', async () => {
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    const first = await call(harness.client, 'send_mail', sendArgs());
+    const second = await call(harness.client, 'send_mail', sendArgs());
+    expect(jsonOf(first)).toMatchObject({ sent: true });
+    expect(jsonOf(second)).toMatchObject({ sent: false, already_sent: true });
+    expect(harness.smtp.delivered).toHaveLength(1);
+    await harness.close();
+  });
+
+  it('names the message that already went out rather than a fresh one', async () => {
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    const first = jsonOf(
+      await call(harness.client, 'send_mail', sendArgs())
+    ) as { message_id: string };
+    const second = await call(harness.client, 'send_mail', sendArgs());
+    expect(jsonOf(second)).toMatchObject({ message_id: first.message_id });
+    expect(textOf(second)).toMatch(/NOT sent a second time/);
+    await harness.close();
+  });
+
+  it('asks nobody a second time', async () => {
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    await call(harness.client, 'send_mail', sendArgs());
+    await call(harness.client, 'send_mail', sendArgs());
+    // One dialog for one message. The repeat is answered from the record.
+    expect(harness.prompts).toHaveLength(1);
+    await harness.close();
+  });
+
+  it('does not spend quota on the repeat', async () => {
+    const harness = await connect({
+      config: { allowSend: true, maxSendsPerHour: 5 },
+      elicit: 'accept',
+    });
+    const first = await call(harness.client, 'send_mail', sendArgs());
+    const second = await call(harness.client, 'send_mail', sendArgs());
+    expect(jsonOf(first)).toMatchObject({ sends_remaining_this_hour: 4 });
+    expect(jsonOf(second)).toMatchObject({ sends_remaining_this_hour: 4 });
+    await harness.close();
+  });
+
+  it('still sends a message that differs anywhere at all', async () => {
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    await call(harness.client, 'send_mail', sendArgs());
+    for (const change of [
+      { body: 'Here it is, again.' },
+      { subject: 'Quarterly report (final)' },
+      { to: ['partner@example.org'] },
+      { html: '<p>Here it is.</p>' },
+    ]) {
+      await call(harness.client, 'send_mail', sendArgs(change));
+    }
+    expect(harness.smtp.delivered).toHaveLength(5);
+    await harness.close();
+  });
+
+  it('covers the two-call token path as well as the dialog', async () => {
+    const harness = await sending();
+    const first = await call(harness.client, 'send_mail', sendArgs());
+    await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ confirm_token: tokenOf(first) })
+    );
+    // A fresh question would be answerable again; the record answers first.
+    const again = await call(harness.client, 'send_mail', sendArgs());
+    expect(jsonOf(again)).toMatchObject({ already_sent: true });
+    expect(harness.smtp.delivered).toHaveLength(1);
+    await harness.close();
+  });
+
+  it('keeps each of the three sending tools apart', async () => {
+    // Same recipients and same text through two tools is two different
+    // messages: one threads under an original, the other does not.
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    await call(harness.client, 'send_mail', {
+      to: ['anna@example.net'],
+      subject: 'Invoice',
+      body: 'Here it is.',
+    });
+    await call(harness.client, 'forward_mail', {
+      to: ['anna@example.net'],
+      original_subject: 'Invoice',
+      body: 'Here it is.',
+    });
+    expect(harness.smtp.delivered).toHaveLength(2);
+    await harness.close();
+  });
+});
+
 describe('what happens after the server answers', () => {
   it('reports recipients the server refused', async () => {
     const smtp = new FakeSmtp();
@@ -454,7 +567,7 @@ describe('what happens after the server answers', () => {
     );
     const lines = stderr.mock.calls.map((c) => String(c[0])).join('\n');
     expect(lines).toMatch(/smtp-mcp audit .* send_mail /);
-    expect(lines).toMatch(/to=\[anna@example\.net\]/);
+    expect(lines).toMatch(/to=\["anna@example\.net"\]/);
     expect(lines).toMatch(/subject="Quarterly report"/);
     // The body is the confidential part; the log must not become a second copy.
     expect(lines).not.toMatch(/CONFIDENTIAL PAYROLL DATA/);
@@ -486,6 +599,52 @@ describe('what happens after the server answers', () => {
     const result = await call(harness.client, 'send_mail', sendArgs());
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/SMTP_USER and SMTP_PASSWORD/);
+    await harness.close();
+  });
+
+  it('records a failed handover as an unknown outcome, not as silence', async () => {
+    // A connection that drops after the end of DATA and before the 250 is
+    // indistinguishable at this layer from one that drops before DATA — the
+    // message may be on its way. An audit log that says nothing at all about
+    // it is the one failure that log exists to prevent.
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const smtp = new FakeSmtp();
+    smtp.failNext = Object.assign(new Error('Connection closed'), {
+      code: 'ECONNECTION',
+    });
+    const harness = await connect({
+      config: { allowSend: true },
+      smtp,
+      elicit: 'accept',
+    });
+    await call(harness.client, 'send_mail', sendArgs());
+    const lines = stderr.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(lines).toMatch(/smtp-mcp audit .* send_mail /);
+    expect(lines).toMatch(/outcome="unknown[^"]*may have been sent"/);
+    expect(lines).toMatch(/to=\["anna@example\.net"\]/);
+    await harness.close();
+  });
+
+  it('counts a message of unknown outcome against the hour', async () => {
+    // The slot used to be released, which is the wrong side of the uncertainty:
+    // a message that may have gone out has to count.
+    const smtp = new FakeSmtp();
+    smtp.failNext = Object.assign(new Error('Connection closed'), {
+      code: 'ECONNECTION',
+    });
+    const harness = await connect({
+      config: { allowSend: true, maxSendsPerHour: 1 },
+      smtp,
+      elicit: 'accept',
+    });
+    await call(harness.client, 'send_mail', sendArgs());
+    const next = await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ subject: 'Another' })
+    );
+    expect(next.isError).toBe(true);
+    expect(textOf(next)).toMatch(/SMTP_MAX_SENDS_PER_HOUR/);
     await harness.close();
   });
 });

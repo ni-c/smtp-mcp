@@ -119,7 +119,17 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
           signature_configured: config.signature !== undefined,
           audit_log_configured: config.auditLog !== undefined,
           tools_registered: config.allowSend ? [...ALL_TOOLS] : [...INFO_TOOLS],
-          every_send_requires_confirmation: true,
+          // This used to be a constant `every_send_requires_confirmation: true`
+          // and it was not always true. With ELICITATION=false `mcp-approval`
+          // takes the two-call token path, which the model redeems on its own
+          // — nobody is asked. The description tells a model to call this tool
+          // first, so a wrong answer here is a wrong answer about the only
+          // thing standing between it and a message that cannot be recalled.
+          elicitation_enabled: config.elicitation,
+          confirmation: config.elicitation
+            ? 'dialog — a person is asked before every send'
+            : 'two-call token — no person is asked; the model can redeem it ' +
+              'itself (the operator set ELICITATION=false)',
         });
       })
   );

@@ -91,6 +91,32 @@ async function performSend(
   confirmToken: string | undefined
 ): Promise<CallToolResult | InputRequiredResult> {
   const prepared = await prepareMessage(args, ctx.config, ctx.version);
+  const resourceKey = setResourceKey(tool, messageFingerprint(args, prepared));
+
+  // At-most-once, before anything else costs anything.
+  //
+  // A tool call is at-least-once by nature: a client that times out and
+  // retries, a host that reconnects mid-flow, a model that repeats itself.
+  // Everywhere else in this family that is harmless, because the guarded
+  // operation is idempotent. Here the second call reaches a person, and
+  // neither copy can be recalled — so the fingerprint the approval is already
+  // bound to is remembered, and a repeat is answered rather than sent.
+  const already = ctx.sent.find(resourceKey);
+  if (already !== undefined) {
+    return jsonResult({
+      sent: false,
+      already_sent: true,
+      message_id: already.messageId,
+      accepted: already.accepted,
+      sends_remaining_this_hour: ctx.limiter.remaining(),
+      note:
+        'This exact message — same recipients, subject, body, quote, HTML and ' +
+        `attachments — was already accepted by the SMTP server as ` +
+        `${already.messageId}. It was NOT sent a second time, and nobody was ` +
+        'asked again. If a second copy really is wanted, change something in ' +
+        'the message.',
+    });
+  }
 
   const slot = ctx.limiter.reserve();
   try {
@@ -104,7 +130,8 @@ async function performSend(
       args,
       confirmToken,
       prepared,
-      slot
+      slot,
+      resourceKey
     );
   } catch (error) {
     slot.release();
@@ -122,7 +149,8 @@ async function withSlot(
   args: MailArgs,
   confirmToken: string | undefined,
   prepared: PreparedMessage,
-  slot: RateLimitSlot
+  slot: RateLimitSlot,
+  resourceKey: string
 ): Promise<CallToolResult | InputRequiredResult> {
   const details: ConfirmationDetail[] = [
     {
@@ -144,6 +172,29 @@ async function withSlot(
     });
   }
   details.push({ label: 'Subject', value: args.subject });
+  // The message itself, which the dialog used not to show at all.
+  //
+  // Every other layer bound the *envelope*: the allowlist says who may be
+  // written to, the fingerprint ties the approval to these exact recipients,
+  // the rate limit caps how many go out. None of them looks at what is written.
+  // A model steered by an injected instruction that mails local secrets to an
+  // address already on the allowlist passed all three, and the human agreed to
+  // a body nobody had read.
+  //
+  // `mcp-approval` cuts every value to 200 characters and flattens it to one
+  // line, so this cannot push the recipients off the screen — and the character
+  // count in the label is what makes the part that is *not* shown visible.
+  for (const [label, value] of [
+    ['Body', args.body],
+    ['Quoted original', args.quote],
+    ['HTML part', args.html],
+  ] as const) {
+    if (value === undefined) continue;
+    details.push({
+      label: `${label} (${value.length} characters)`,
+      value: value === '' ? '(empty)' : value,
+    });
+  }
   if (prepared.attachments.length > 0) {
     details.push({
       label: 'Attachments',
@@ -179,7 +230,7 @@ async function withSlot(
     {
       what: `${verb} to ${prepared.composed.envelope.to.length} recipient(s)`,
       consequence,
-      resourceKey: setResourceKey(tool, messageFingerprint(args, prepared)),
+      resourceKey,
       token: confirmToken,
       toolName: tool,
       details,
@@ -201,12 +252,57 @@ async function withSlot(
     return outcome.result;
   }
 
-  const sent = await ctx.client.send({
-    envelope: prepared.composed.envelope,
-    raw: prepared.composed.raw,
-  });
+  // A failure here is not one failure but two that look alike. A refused
+  // connection, bad credentials or a rejected envelope means nothing left the
+  // building. A connection lost after the end of DATA and before the 250 means
+  // the message may already be queued for delivery — and nodemailer cannot tell
+  // the two apart either, so neither can this.
+  //
+  // Both consequences therefore follow the unsafe reading. The rate-limit slot
+  // is kept rather than released, because a message that may be on its way has
+  // to count against the hour. And a line is written recording the outcome as
+  // unknown, because a delivered message with no record at all is precisely the
+  // failure this log exists to prevent — it describes itself as the place a
+  // person reconstructs what a hijacked session actually sent.
+  //
+  // What is deliberately not done is remembering it as sent. Most failures on
+  // this path are real failures, and locking the retry out for fifteen minutes
+  // would be the wrong trade for the common case. So a retry after this one
+  // error is the single path on which this server can still deliver twice, and
+  // SECURITY.md says so rather than leaving it to be discovered.
+  let sent;
+  try {
+    sent = await ctx.client.send({
+      envelope: prepared.composed.envelope,
+      raw: prepared.composed.raw,
+    });
+  } catch (error) {
+    slot.commit();
+    audit(
+      tool,
+      {
+        from: ctx.config.smtp.fromAddress,
+        to: prepared.to,
+        cc: prepared.cc.length > 0 ? prepared.cc : undefined,
+        bcc: prepared.bcc.length > 0 ? prepared.bcc : undefined,
+        subject: args.subject,
+        message_id: prepared.composed.messageId,
+        bytes: prepared.composed.bytes,
+        outcome: 'unknown — the server did not confirm; it may have been sent',
+        error: error instanceof Error ? error.message : String(error),
+      },
+      ctx.config.auditLog
+    );
+    throw error;
+  }
 
   slot.commit();
+  // Before the audit line and before the result: from here on a retry of this
+  // same call must be answered, not repeated.
+  ctx.sent.record(resourceKey, {
+    messageId: prepared.composed.messageId,
+    accepted: sent.accepted.length,
+  });
   audit(
     tool,
     {
