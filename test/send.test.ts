@@ -856,10 +856,10 @@ describe('send_mail on the 2026-07-28 revision', () => {
     // The gap this closes, on the transport shape that actually exposes it.
     // Here the approval is a `requestState` the client holds and resends, and
     // `mcp-approval` binds it without dating it — the same seal is redeemable
-    // until it expires. `src/index.ts` connects a plain StdioServerTransport
-    // today and therefore negotiates 2025-11-25, where the dialog never leaves
-    // the tool call and there is nothing to replay; this is one line away from
-    // being the production path, and a second copy cannot be recalled.
+    // until it expires. Since `src/index.ts` serves stdio through `serveStdio`,
+    // a negotiating client reaches this era over the production transport too —
+    // on 2025-11-25 the dialog never leaves the tool call and there is nothing
+    // to replay, so this is the shape where a second copy would be spendable.
     const harness = await connectModern({ config: { allowSend: true } });
     const asked = await harness.send(sendArgs());
     const first = await harness.send(sendArgs(), {

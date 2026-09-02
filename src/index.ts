@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { serveStdio } from '@modelcontextprotocol/server/stdio';
 
 import { loadConfig } from './config.js';
 import { createServer } from './server.js';
@@ -38,9 +39,12 @@ async function main(): Promise<void> {
     );
   }
 
-  let server;
+  // Built before anything is served, so a rejected tool filter still ends
+  // the process rather than surfacing as a failed handshake once a client
+  // has already connected.
+  let pending: McpServer | undefined;
   try {
-    server = createServer(config);
+    pending = createServer(config);
   } catch (error) {
     // A bad tool list is operator feedback, not a crash.
     if (error instanceof ToolFilterError) {
@@ -51,7 +55,20 @@ async function main(): Promise<void> {
   }
 
   // stdout belongs to the protocol; everything human-readable goes to stderr.
-  await server.connect(new StdioServerTransport());
+  // `serveStdio` owns the era decision for the connection: the opening
+  // exchange selects 2025-11-25 or 2026-07-28 and pins one instance from
+  // this factory for its lifetime. A hand-wired `StdioServerTransport`
+  // serves only the 2025 era, which is why a negotiating client’s
+  // `server/discover` probe was answered with "Method not found".
+  //
+  // The instance built above serves the first connection; a second call — a
+  // modern probe followed by the real connection — builds a fresh one, which
+  // is safe because `createServer` only registers tools.
+  serveStdio(() => {
+    const server = pending ?? createServer(config);
+    pending = undefined;
+    return server;
+  });
   console.error(
     config.smtp.host === undefined
       ? 'smtp-mcp: connected without configuration — tools are listed but every call will fail'
