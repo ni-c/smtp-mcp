@@ -47,7 +47,14 @@ const MAIL = {
   body: 'Integration body.',
   html:
     '<p>Integration body.</p><script>steal()</script>' +
-    '<img src="https://tracker.example/p.gif">',
+    '<img src="https://tracker.example/p.gif">' +
+    // The two shapes that used to walk straight through: a `<` in an earlier
+    // attribute value, which stopped the tag pattern reaching the closing `>`,
+    // and `srcset`, which `\bsrc` never matched at all. Both are beacons and
+    // both are asserted on the transmitted bytes below.
+    '<img alt="<" src="https://tracker.example/hidden.gif">' +
+    '<img srcset="https://tracker.example/set.gif 2x">' +
+    '<script a="<">peek()</script>',
   attachments: ['report.pdf'],
 };
 
@@ -100,6 +107,9 @@ describe('the connection', () => {
 
 describe('the allowlist', () => {
   it('refuses a recipient outside it, and names the variable', async () => {
+    // The reason, not a bare `expectError: true`: a renamed parameter makes the
+    // schema refuse the call, and a guard test written that way stays green
+    // while the guard it is named after is no longer reached at all.
     const refused = await asking.call(
       'send_mail',
       {
@@ -107,9 +117,73 @@ describe('the allowlist', () => {
         subject: SUBJECT,
         body: 'This must not go out.',
       },
-      { expectError: true }
+      { expectError: /not covered by SMTP_ALLOWED_RECIPIENTS/ }
     );
-    expect(refused).toContain('SMTP_ALLOWED_RECIPIENTS');
+    expect(refused).toContain('stranger@evil.example');
+    expect((await inbox(sandbox.api)).messages_count).toBe(0);
+  });
+});
+
+describe('the attachment policy', () => {
+  it('refuses a path that leaves SMTP_ATTACHMENT_DIR', async () => {
+    await asking.call(
+      'send_mail',
+      {
+        to: ['anna@example.net'],
+        subject: SUBJECT,
+        body: 'This must not go out.',
+        attachments: ['../../../etc/passwd'],
+      },
+      { expectError: /must be a plain file name, not a path/ }
+    );
+    expect((await inbox(sandbox.api)).messages_count).toBe(0);
+  });
+
+  it('refuses an executable file type', async () => {
+    await asking.call(
+      'send_mail',
+      {
+        to: ['anna@example.net'],
+        subject: SUBJECT,
+        body: 'This must not go out.',
+        attachments: ['payload.exe'],
+      },
+      { expectError: /is an executable file type/ }
+    );
+    expect((await inbox(sandbox.api)).messages_count).toBe(0);
+  });
+});
+
+describe('markup that cannot be cleaned', () => {
+  it('is refused rather than sent with a script still in it', async () => {
+    // Refusing is the right failure for outgoing text: nothing arrives that
+    // cannot be recalled. An unterminated attribute quote is the case no
+    // pattern here can resolve, so it is the case that must stop.
+    await asking.call(
+      'send_mail',
+      {
+        to: ['anna@example.net'],
+        subject: SUBJECT,
+        body: 'This must not go out.',
+        html: '<p>x</p><script a="',
+      },
+      { expectError: /still contains a <script> tag/ }
+    );
+    expect((await inbox(sandbox.api)).messages_count).toBe(0);
+  });
+
+  it('refuses an RFC 2047 encoded-word in the subject', async () => {
+    // Shown to the human as written, decoded by the recipient's client into a
+    // different sentence entirely.
+    await asking.call(
+      'send_mail',
+      {
+        to: ['anna@example.net'],
+        subject: '=?utf-8?B?UGF5bWVudCBkZXRhaWxzIGNoYW5nZWQ=?=',
+        body: 'This must not go out.',
+      },
+      { expectError: /encoded-word/ }
+    );
     expect((await inbox(sandbox.api)).messages_count).toBe(0);
   });
 });
@@ -145,6 +219,18 @@ describe('sending, and what actually arrived', () => {
     expect(sent.accepted).toHaveLength(3);
   });
 
+  it('will not send the same message a second time', async () => {
+    // The strongest form of the at-most-once claim: not "the tool said no" but
+    // "nothing else arrived at the SMTP server". An approval binds an answer to
+    // a question and stays redeemable until it expires, so without a record of
+    // what already went out a retried leg puts a second copy in an inbox.
+    const before = (await inbox(sandbox.api)).messages_count;
+    const repeat = await plain.call('send_mail', MAIL);
+    expect(repeat).toContain('already_sent');
+    expect(repeat).toContain(sent.message_id);
+    expect((await inbox(sandbox.api)).messages_count).toBe(before);
+  });
+
   it('delivers what was composed', async () => {
     const list = await inbox(sandbox.api);
     expect(list.messages_count).toBe(1);
@@ -169,10 +255,13 @@ describe('sending, and what actually arrived', () => {
     expect(wire).toMatch(/^X-Mailer: smtp-mcp\//m);
     expect(message.Text).toContain('Sent from the smtp-mcp integration suite');
 
-    // Neither survived the sanitiser, and this is the only place that can be
-    // checked on the bytes that were actually transmitted.
+    // None of them survived the sanitiser, and this is the only place that can
+    // be checked on the bytes that were actually transmitted. `hidden.gif`,
+    // `set.gif` and `peek()` are the three that used to go out under the
+    // operator's own DKIM signature while the dialog said they had been removed.
     expect(wire).not.toContain('tracker.example');
     expect(wire).not.toContain('steal()');
+    expect(wire).not.toContain('peek()');
 
     expect(message.Attachments).toHaveLength(1);
     expect(message.Attachments[0]!.FileName).toBe('report.pdf');

@@ -4,6 +4,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import type { Config } from './config.js';
 import { ConfirmationStore, createApproval } from 'mcp-approval';
 import { RateLimiter } from './ratelimit.js';
+import { SentRegistry } from './sent.js';
 import { SmtpClient, type SmtpClientFactory } from './smtp.js';
 import { buildToolFilter, installToolFilter } from 'mcp-tool-allowlist';
 
@@ -86,6 +87,9 @@ export function createServer(config: Config, deps: ServerDeps = {}): McpServer {
     client,
     config,
     limiter: new RateLimiter(config.maxSendsPerHour),
+    // One per server, like the limiter: a stdio server is spawned per session,
+    // so the process is the flow whose sends have to be at-most-once.
+    sent: new SentRegistry(),
     // One approver per server: it holds the key that seals the request state
     // carried out through the client and back.
     approval: createApproval({

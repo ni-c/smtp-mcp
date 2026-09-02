@@ -48,7 +48,13 @@ Use it to tell a configuration problem apart from a delivery problem.
 
 All three ask a person to confirm before acting, using MCP elicitation, and fall back to a
 two-call token where the client cannot show a dialog. All three are annotated `destructiveHint`,
-because a message cannot be recalled.
+because a message cannot be recalled. The dialog lists the recipients, the subject, the body, the
+quoted original and the HTML part — each caller-chosen value on its own labelled line, cut to 200
+characters, with its full length in the label.
+
+A message the SMTP server has already accepted is not sent a second time: an identical call
+within the approval window answers `already_sent` with the earlier `message_id`, asks nobody and
+spends no quota.
 
 ### `send_mail`
 

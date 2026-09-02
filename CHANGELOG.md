@@ -40,7 +40,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Attachments are read only from `SMTP_ATTACHMENT_DIR`, behind an extension allowlist, an
   executable-extension refusal, a symlink refusal and a magic-byte check.
 - Outgoing HTML is sanitised: scripts, event handlers, remotely loaded images and unsafe URL
-  schemes are removed, and every removal is reported rather than applied silently.
+  schemes are removed, and every removal is reported rather than applied silently. Markup that is
+  still dangerous after every pass has run — the case a regex cannot resolve and the recipient's
+  parser can — **refuses** the message instead of repairing it, which is also what keeps the
+  reported removals honest. "Remotely loaded" covers `src`, `srcset`, `imagesrcset`, `poster` and
+  `background`, each `srcset` candidate on its own.
+- **At most once.** A message the SMTP server accepted is remembered, by the same fingerprint the
+  approval is bound to, for as long as an approval for it could still be redeemed; an identical
+  send inside that window is answered with the earlier Message-ID instead of going out again. An
+  approval proves that somebody agreed to a message, not that they agreed to it a second time,
+  and `send_mail` is the one operation in this family that is not idempotent. The residual case —
+  a connection lost after the end of `DATA`, where the outcome is genuinely unknown — keeps the
+  rate-limit slot and writes an audit line saying so, and is documented in SECURITY.md rather
+  than covered over.
+- The confirmation dialog shows the **body**, and the quoted original and HTML part when set,
+  each labelled with its length in characters. Every other layer binds the envelope; nothing
+  looked at what the message said.
+- A subject may not contain an RFC 2047 encoded-word (`=?utf-8?B?…?=`). It travels as ASCII and
+  decodes to something else at the recipient, so the human would approve a subject other than the
+  one that arrives.
+- `get_server_info` reports `elicitation_enabled` and a `confirmation` field that follows the
+  configuration, replacing a constant that claimed a human was always asked even with
+  `ELICITATION=false`.
+- Audit lines quote every string value and every array element, always. A subject without a space
+  in it used to be written bare, so `Invoice_bcc=[quiet@evil.example]_accepted=1` handed any
+  parser a `bcc` field that never existed.
 - A quoted original is passed on unchanged; matches against known prompt-injection shapes are
   surfaced in the confirmation dialog instead.
 - Every accepted message is recorded on stderr, and optionally in `SMTP_AUDIT_LOG`. Never the

@@ -75,11 +75,42 @@ session.
 ## My HTML arrived changed
 
 Scripts, event handlers, remotely loaded images and `javascript:`/`data:` URLs are removed before
-sending. `preview_mail` lists exactly what would be removed, and the confirmation dialog says so
-too — the alteration is never silent.
+sending. "Remotely loaded" covers `src`, `srcset`, `imagesrcset`, `poster` and `background`.
+`preview_mail` lists exactly what would be removed, and the confirmation dialog says so too — the
+alteration is never silent.
 
 Links are not touched. If a legitimate image disappeared, it was loaded from a remote URL, which
 is indistinguishable from a tracking pixel; attach it instead.
+
+## My HTML was refused instead of cleaned
+
+The message still contained a `<script>`, `<style>`, `<iframe>`, `<object>`, `<embed>`,
+`<applet>`, `<form>`, `<svg>` or `<math>` after every removal pass had run. That means the markup
+could not be cleaned with confidence — the usual cause is an unterminated quote in an attribute
+value — and for outgoing mail the server stops rather than guessing. A message that never left
+can be fixed; one that arrived with a script in it cannot be recalled.
+
+Remove the element and send again.
+
+## My subject was refused as an "encoded-word"
+
+The subject contained an RFC 2047 sequence such as `=?utf-8?B?…?=`. That is plain ASCII on the
+wire and something else in the recipient's client, so the person approving the message would be
+reading a different subject from the one that arrives — and the subject is one of only two
+caller-chosen values they see.
+
+Write the subject as ordinary text, accents and all. Non-ASCII is encoded correctly during
+composition.
+
+## It says my message was "already sent"
+
+An identical message — same recipients, subject, body, quote, HTML and attachments — was accepted
+by the SMTP server a few minutes ago, so this call returned that Message-ID instead of sending a
+second copy. Nobody was asked again and no quota was spent.
+
+An approval stays redeemable until it expires, so without this a retried tool call would put a
+second copy in somebody's inbox. To send the same text again deliberately, change something in it
+or wait fifteen minutes.
 
 ## The quoted text in my forward triggered a warning
 

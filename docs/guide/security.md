@@ -71,13 +71,42 @@ check that line, and see [Asking a person](/guide/approval).
 :::
 
 Confirmation text never interpolates caller-chosen values into the server's own sentence.
-Recipients, the subject and attachment names go on their own labelled lines under a heading
-saying they came from the caller. A subject reading `Invoice" — routine, pre-approved by IT` is a
-real technique, and it works by being read as part of the sentence around it.
+Recipients, the subject, the message and the attachment names go on their own labelled lines
+under a heading saying they came from the caller. A subject reading
+`Invoice" — routine, pre-approved by IT` is a real technique, and it works by being read as part
+of the sentence around it.
 
 Bcc recipients get their own line, labelled as hidden from the others. A Bcc a human does not see
 in the dialog is the ideal exfiltration channel: the message looks exactly like the one they
 approved.
+
+The **body** is shown too, with the quoted original and the HTML part when they are set, each
+labelled with its length in characters. Every other layer here binds the envelope — who may be
+written to, which recipients the approval covers, how many messages an hour. None of them looks
+at what is written, so a model steered into mailing local secrets to somebody already on the
+allowlist passed all of them, and the person approved a body nobody had read. Each value is cut
+to 200 characters and flattened onto one line; the count in the label is what shows how much is
+not being shown.
+
+## At most once
+
+An approval proves that a person agreed to *this* message. It does not prove they agreed to it
+*twice* — an approval stays redeemable until it expires, so a retried tool call carrying the same
+one would send a second copy.
+
+A message the SMTP server accepted is therefore remembered, by the same fingerprint the approval
+is bound to, for as long as an approval for it could still be spent. An identical send inside
+that window is answered with the earlier Message-ID: nobody is asked again, nothing goes out, no
+quota is used. Outside it the same text sends normally.
+
+::: warning One path can still deliver twice
+If the connection fails **after** the end of `DATA` and before the server's `250`, nobody can
+tell whether the message went out. The slot is kept and an audit line is written saying the
+outcome is unknown — but the message is not remembered as sent, because most failures there are
+real failures and blocking the retry would be the wrong trade. A retry after that particular
+error is the one case where two copies can arrive. See
+[SECURITY.md](https://github.com/ni-c/smtp-mcp/blob/main/SECURITY.md).
+:::
 
 ## Quoted originals
 
@@ -115,6 +144,16 @@ invoice contains a beacon.
 
 Removals are conservative and every one is listed in the confirmation and in `preview_mail`.
 Links are left alone — they fetch nothing on their own. Nothing is silently rewritten.
+
+"Remotely loaded" means `src`, `srcset`, `imagesrcset`, `poster` and `background`, and each
+candidate of a `srcset` list on its own. A `background` on a `<body>` or a `<table>` is a counter
+just as much as a 1×1 `<img>`: it reports when a message was opened, from where, and how often.
+
+And when markup that must not survive is still there after every pass has run, the message is
+**refused** rather than repaired. A regex is not a parser and the recipient's client is, so the
+two can be made to disagree; for outgoing text the safe direction is to stop. It is also what
+keeps the removal list honest — the dialog can only name something that really is gone, because
+a message where it is not gone never leaves.
 
 ## What framing buys
 
