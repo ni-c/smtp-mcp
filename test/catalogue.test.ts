@@ -27,6 +27,43 @@ describe('the catalogue matches the server', () => {
     await harness.close();
   });
 
+  it('declares an output schema on every tool', async () => {
+    // The same argument as the annotations below, one field along. A tool that
+    // says nothing about its result forces a client to parse prose to find out
+    // what it got, and the SDK sends no `structuredContent` at all for a tool
+    // that declared no schema.
+    const harness = await connect({ config: { allowSend: true } });
+    const { tools } = await harness.client.listTools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      expect(tool.outputSchema, tool.name).toBeDefined();
+      // An object root, not merely a schema. SEP-2106 allows an array or a
+      // scalar, but a 2025-era client is served that same tool with the schema
+      // rewritten to `{result: …}` — so it would answer in two different
+      // shapes depending on who asked.
+      expect(tool.outputSchema?.type, tool.name).toBe('object');
+    }
+    await harness.close();
+  });
+
+  it('marks the one tool that reports text it did not write', async () => {
+    // preview_mail returns a quoted original, and anyone in the world can send
+    // mail. Everything else here is this server's own configuration or the
+    // outcome of its own send, so the marker would be a false claim about who
+    // wrote it.
+    const harness = await connect({ config: { allowSend: true } });
+    const { tools } = await harness.client.listTools();
+    const marked = tools
+      .filter((tool) => {
+        const properties = tool.outputSchema?.properties as
+          Record<string, unknown> | undefined;
+        return properties?.untrusted !== undefined;
+      })
+      .map((tool) => tool.name);
+    expect(marked).toEqual(['preview_mail']);
+    await harness.close();
+  });
+
   it('declares all four annotation hints on every tool', async () => {
     // Not a style rule. Two of the four default to a *stronger* claim than
     // silence suggests: the specification gives destructiveHint and

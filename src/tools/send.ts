@@ -107,7 +107,12 @@ async function performSend(
       sent: false,
       already_sent: true,
       message_id: already.messageId,
+      // The addresses, not a count. Both branches of this tool answer with the
+      // same key, and one of them used to put a number where the other put a
+      // list — which nothing noticed until the tool had to declare what it
+      // returns.
       accepted: already.accepted,
+      rejected: [],
       sends_remaining_this_hour: ctx.limiter.remaining(),
       note:
         'This exact message — same recipients, subject, body, quote, HTML and ' +
@@ -301,7 +306,7 @@ async function withSlot(
   // same call must be answered, not repeated.
   ctx.sent.record(resourceKey, {
     messageId: prepared.composed.messageId,
-    accepted: sent.accepted.length,
+    accepted: sent.accepted,
   });
   audit(
     tool,
@@ -325,6 +330,7 @@ async function withSlot(
 
   return jsonResult({
     sent: true,
+    already_sent: false,
     message_id: prepared.composed.messageId,
     accepted: sent.accepted,
     rejected: sent.rejected,
@@ -337,6 +343,30 @@ async function withSlot(
           'refused others — see "rejected". Those people did not receive it.',
   });
 }
+
+/**
+ * What the three send tools answer with — one shape for both outcomes.
+ *
+ * A repeat of a message already accepted answers `sent: false` with
+ * `already_sent: true` and the same `message_id`, rather than a different
+ * shape: a client should be able to read one field to find out what happened.
+ * Making that true also turned up a defect — the two branches used `accepted`
+ * for an address list and for a count of them.
+ */
+const sendOutcome = z.object({
+  sent: z.boolean().describe('False when this exact message already went out.'),
+  already_sent: z.boolean(),
+  message_id: z.string(),
+  accepted: z
+    .array(z.string())
+    .describe('Addresses the SMTP server took responsibility for.'),
+  rejected: z
+    .array(z.unknown())
+    .describe('Addresses it refused. These people did not receive it.'),
+  bytes: z.number().int().optional(),
+  sends_remaining_this_hour: z.number().int(),
+  note: z.string(),
+});
 
 export function registerSendTools(
   server: McpServer,
@@ -375,6 +405,7 @@ export function registerSendTools(
         idempotentHint: false,
         openWorldHint: false,
       },
+      outputSchema: sendOutcome,
     },
     ({ confirm_token, ...args }, mcp) =>
       run(() =>
@@ -430,6 +461,7 @@ export function registerSendTools(
         idempotentHint: false,
         openWorldHint: false,
       },
+      outputSchema: sendOutcome,
     },
     ({ confirm_token, original_subject, subject, ...rest }, mcp) =>
       run(() =>
@@ -489,6 +521,7 @@ export function registerSendTools(
         idempotentHint: false,
         openWorldHint: false,
       },
+      outputSchema: sendOutcome,
     },
     ({ confirm_token, original_subject, subject, ...rest }, mcp) =>
       run(() =>

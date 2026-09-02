@@ -316,7 +316,11 @@ describe('send_mail, the checks before the gate', () => {
         cc: ['a@example.net'],
       })
     );
-    expect(result.isError).not.toBe(true);
+    // It got past the recipient check, which is what this is about: the answer
+    // is the confirmation prompt and not a refusal. (The prompt is an error
+    // result — the message was not sent — so `isError` says nothing here.)
+    expect(textOf(result)).toContain('confirm_token=');
+    expect(textOf(result)).not.toMatch(/SMTP_MAX_RECIPIENTS/);
     await harness.close();
   });
 

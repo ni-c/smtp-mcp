@@ -22,6 +22,7 @@ import { missingConfigKeys } from '../config.js';
 import { prepareMessage, type PreparedMessage } from '../prepare.js';
 import { describeAllowlist, isAllowed } from '../recipients.js';
 import { fencedUntrustedResult, jsonResult, run } from '../result.js';
+import { untrustedFields } from '../output-schema.js';
 import { ALL_TOOLS, INFO_TOOLS } from './catalogue.js';
 import type { ToolContext } from './context.js';
 
@@ -80,6 +81,49 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         'whom" without touching the network.',
       inputSchema: z.object({}),
       annotations: READ_ONLY,
+      // No untrusted marker anywhere in this file's first, second and fourth
+      // tool: every field below is this server's own configuration, read from
+      // its own environment. preview_mail is the exception, and carries it.
+      outputSchema: z.object({
+        can_send: z
+          .boolean()
+          .describe('The load-bearing fact: both switched on and configured.'),
+        sending_enabled: z.boolean(),
+        sending_gate: z.string(),
+        configured: z.boolean(),
+        missing_environment_variables: z.array(z.string()),
+        smtp: z.object({
+          host: z.string().nullable(),
+          port: z.number().int(),
+          tls: z.string(),
+          insecure_tls: z.boolean(),
+        }),
+        from: z
+          .string()
+          .nullable()
+          .describe('The one address this can send as.'),
+        from_is_fixed: z.literal(true),
+        allowed_recipients: z.string(),
+        limits: z.object({
+          max_recipients_per_message: z.number().int(),
+          max_sends_per_hour: z.number().int(),
+          sends_remaining_this_hour: z.number().int(),
+          max_message_bytes: z.number().int(),
+          max_attachment_bytes: z.number().int(),
+        }),
+        attachments: z.object({
+          enabled: z.boolean(),
+          gate: z.string(),
+          allowed_extensions: z.array(z.string()),
+        }),
+        signature_configured: z.boolean(),
+        audit_log_configured: z.boolean(),
+        tools_registered: z.array(z.string()),
+        elicitation_enabled: z.boolean(),
+        confirmation: z
+          .string()
+          .describe('Whether a person is asked, or a token the model redeems.'),
+      }),
     },
     () =>
       run(async () => {
@@ -151,6 +195,17 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
           .describe('The email addresses to check.'),
       }),
       annotations: READ_ONLY,
+      outputSchema: z.object({
+        allowlist: z.string(),
+        allowlist_variable: z.literal('SMTP_ALLOWED_RECIPIENTS'),
+        max_recipients_per_message: z.number().int(),
+        allowed_count: z.number().int(),
+        refused_count: z.number().int(),
+        results: z.array(
+          z.object({ address: z.string(), allowed: z.boolean() })
+        ),
+        note: z.string().optional(),
+      }),
     },
     ({ addresses }) =>
       run(async () => {
@@ -201,6 +256,35 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         attachments: attachmentsParam,
       }),
       annotations: READ_ONLY,
+      // The only tool here that carries the marker: a quoted original was
+      // written by whoever sent it, and anyone in the world can send mail.
+      outputSchema: z.object({
+        ...untrustedFields,
+        from: z.string().nullable(),
+        recipient_count: z.number().int(),
+        bcc_count: z
+          .number()
+          .int()
+          .describe('Invisible to the other recipients.'),
+        bytes: z.number().int(),
+        html_removed: z
+          .array(z.string())
+          .describe('What the HTML sanitiser took out.'),
+        suspicious: z
+          .array(z.string())
+          .describe('Prompt-injection shapes matched in the quoted original.'),
+        headers: z.string().describe('The composed header block, verbatim.'),
+        text_body: z.string(),
+        html_body: z.string().optional().describe('After sanitising.'),
+        attachments: z.array(
+          z.object({
+            filename: z.string(),
+            content_type: z.string(),
+            bytes: z.number().int(),
+            sha256: z.string().describe('First 16 hex characters.'),
+          })
+        ),
+      }),
     },
     (args) =>
       run(async () => {
@@ -218,7 +302,29 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         return fencedUntrustedResult(
           header,
           renderPreview(prepared, prepared.composed.htmlBody),
-          prepared.suspiciousQuote
+          prepared.suspiciousQuote,
+          {
+            from: config.smtp.from ?? null,
+            recipient_count: prepared.composed.envelope.to.length,
+            bcc_count: prepared.bcc.length,
+            bytes: prepared.composed.bytes,
+            html_removed: prepared.composed.htmlRemoved,
+            suspicious: prepared.suspiciousQuote,
+            headers: headerBlockOf(prepared.composed.raw),
+            text_body: sanitizeText(prepared.composed.textBody),
+            ...(prepared.composed.htmlBody === undefined
+              ? {}
+              : { html_body: sanitizeText(prepared.composed.htmlBody) }),
+            attachments: prepared.attachments.map((attachment) => ({
+              filename: attachment.filename,
+              content_type: attachment.contentType,
+              bytes: attachment.bytes,
+              sha256: createHash('sha256')
+                .update(attachment.content)
+                .digest('hex')
+                .slice(0, 16),
+            })),
+          }
         );
       })
   );
@@ -234,6 +340,14 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
       inputSchema: z.object({}),
       // Nothing changes on the far side: this opens a session and closes it.
       annotations: READ_ONLY,
+      outputSchema: z.object({
+        reachable: z.literal(true),
+        host: z.string().nullable(),
+        port: z.number().int(),
+        tls: z.string(),
+        authenticated: z.literal(true),
+        note: z.string(),
+      }),
     },
     () =>
       run(async () => {

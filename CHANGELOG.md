@@ -15,6 +15,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Every tool declares an `outputSchema` and answers with `structuredContent`
+  beside the text block. A client no longer has to parse prose to use a result.
+
+  `preview_mail` carries the untrusted marker as `untrusted: true` and
+  `source: "smtp"` fields — a quoted original was written by whoever sent it,
+  and anyone in the world can send mail. Its text block keeps the nonce fence;
+  the structured half states the same fields rather than making a client parse
+  it. No other tool carries the marker, because no other tool reports anything
+  this server did not write itself.
+
+### Fixed
+
+- **The three send tools reported `accepted` as two different types.** A first
+  send answered with the list of addresses the SMTP server took; a repeat of a
+  message already accepted answered with a count of them, under the same key.
+  Both now answer with the addresses, and the at-most-once path also states
+  `already_sent`, `rejected` and the same `note` field — one shape a client can
+  read, rather than two it has to tell apart. Found by having to declare what
+  these tools return.
+
+### Changed
+
+- A result too large to shrink is now an error rather than an envelope carrying
+  the oversized document as a string. The envelope was valid JSON and is no
+  longer a valid _answer_: the SDK validates each result against the schema the
+  tool declares, and there is no true answer of that size.
+
+- The two-call `confirm_token` prompt is an error result. The message was not
+  sent, which is what `isError` says — and a tool that declares an output schema
+  may not answer without `structuredContent` unless the result is an error. The
+  text is unchanged and still carries the token.
+
+### Added
+
 - Initial implementation: an MCP server that sends mail over SMTP, as the counterpart to
   [imap-mcp](https://github.com/ni-c/imap-mcp), which deliberately cannot.
 - Seven tools. Four are always available and cannot put a message on the wire —

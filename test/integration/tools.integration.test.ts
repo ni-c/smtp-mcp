@@ -1,4 +1,5 @@
 import {
+  expectEveryToolDeclaresOutputSchema,
   expectEveryToolExercised,
   startServer,
   toolCoverage,
@@ -206,7 +207,12 @@ describe('the preview', () => {
 
 describe('sending, and what actually arrived', () => {
   it('sends only on the second call', async () => {
-    const first = await plain.call('send_mail', MAIL);
+    // An error result: the prompt says nothing was sent. It has to be one — a
+    // tool that declares an `outputSchema` may not answer without
+    // `structuredContent` unless the result is an error.
+    const first = await plain.call('send_mail', MAIL, {
+      expectError: /confirm_token=/,
+    });
     expect(first).toContain('confirm_token');
     // The first call is a question. Nothing left the process.
     expect((await inbox(sandbox.api)).messages_count).toBe(0);
@@ -225,6 +231,8 @@ describe('sending, and what actually arrived', () => {
     // a question and stays redeemable until it expires, so without a record of
     // what already went out a retried leg puts a second copy in an inbox.
     const before = (await inbox(sandbox.api)).messages_count;
+    // Not a prompt and not an error: the at-most-once record answers before
+    // anybody is asked again.
     const repeat = await plain.call('send_mail', MAIL);
     expect(repeat).toContain('already_sent');
     expect(repeat).toContain(sent.message_id);
@@ -311,6 +319,15 @@ describe('threading', () => {
     expect(asking.prompts.length).toBeGreaterThan(0);
     expect(plain.prompts).toHaveLength(0);
   });
+});
+
+it('declares an output schema on every tool', async () => {
+  // The unit suite checks the same thing against a stub. Here it is checked
+  // against the server that has just answered every one of these tools against
+  // a real SMTP server — and each of those answers went through the SDK's
+  // validation against the schema below it.
+  const { tools } = await asking.client.listTools();
+  expectEveryToolDeclaresOutputSchema(tools);
 });
 
 it('exercises every tool in the catalogue', () => {

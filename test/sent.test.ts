@@ -11,16 +11,22 @@ afterEach(() => {
 describe('SentRegistry', () => {
   it('remembers a message it was told about', () => {
     const registry = new SentRegistry();
-    registry.record('send_mail:abc', { messageId: '<1@x.net>', accepted: 2 });
+    registry.record('send_mail:abc', {
+      messageId: '<1@x.net>',
+      accepted: ['a@x.net', 'b@x.net'],
+    });
     expect(registry.find('send_mail:abc')).toEqual({
       messageId: '<1@x.net>',
-      accepted: 2,
+      accepted: ['a@x.net', 'b@x.net'],
     });
   });
 
   it('knows nothing about a message it was not told about', () => {
     const registry = new SentRegistry();
-    registry.record('send_mail:abc', { messageId: '<1@x.net>', accepted: 1 });
+    registry.record('send_mail:abc', {
+      messageId: '<1@x.net>',
+      accepted: ['a@x.net'],
+    });
     expect(registry.find('send_mail:def')).toBeUndefined();
     // The tool name is part of the key: the same text through reply_mail is a
     // different message.
@@ -32,7 +38,10 @@ describe('SentRegistry', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const registry = new SentRegistry(15 * MINUTE);
-    registry.record('send_mail:abc', { messageId: '<1@x.net>', accepted: 1 });
+    registry.record('send_mail:abc', {
+      messageId: '<1@x.net>',
+      accepted: ['a@x.net'],
+    });
 
     vi.setSystemTime(14 * MINUTE);
     expect(registry.find('send_mail:abc')).toBeDefined();
@@ -47,10 +56,16 @@ describe('SentRegistry', () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     const registry = new SentRegistry(5 * MINUTE);
-    registry.record('send_mail:old', { messageId: '<1@x.net>', accepted: 1 });
+    registry.record('send_mail:old', {
+      messageId: '<1@x.net>',
+      accepted: ['a@x.net'],
+    });
 
     vi.setSystemTime(6 * MINUTE);
-    registry.record('send_mail:new', { messageId: '<2@x.net>', accepted: 1 });
+    registry.record('send_mail:new', {
+      messageId: '<2@x.net>',
+      accepted: ['a@x.net'],
+    });
     expect(registry.find('send_mail:old')).toBeUndefined();
     expect(registry.find('send_mail:new')).toBeDefined();
   });
@@ -61,7 +76,10 @@ describe('SentRegistry', () => {
     // thing to lose, being the one closest to expiring anyway.
     const registry = new SentRegistry();
     for (let i = 0; i < 600; i += 1) {
-      registry.record(`send_mail:${i}`, { messageId: `<${i}>`, accepted: 1 });
+      registry.record(`send_mail:${i}`, {
+        messageId: `<${i}>`,
+        accepted: ['a@x.net'],
+      });
     }
     expect(registry.find('send_mail:0')).toBeUndefined();
     expect(registry.find('send_mail:599')).toBeDefined();
@@ -69,12 +87,15 @@ describe('SentRegistry', () => {
 
   it('moves a re-recorded key to the end rather than leaving it oldest', () => {
     const registry = new SentRegistry();
-    registry.record('send_mail:a', { messageId: '<1>', accepted: 1 });
-    registry.record('send_mail:b', { messageId: '<2>', accepted: 1 });
-    registry.record('send_mail:a', { messageId: '<3>', accepted: 1 });
+    registry.record('send_mail:a', { messageId: '<1>', accepted: ['a@x.net'] });
+    registry.record('send_mail:b', { messageId: '<2>', accepted: ['a@x.net'] });
+    registry.record('send_mail:a', { messageId: '<3>', accepted: ['a@x.net'] });
     expect(registry.find('send_mail:a')).toMatchObject({ messageId: '<3>' });
     for (let i = 0; i < 511; i += 1) {
-      registry.record(`send_mail:${i}`, { messageId: `<${i}>`, accepted: 1 });
+      registry.record(`send_mail:${i}`, {
+        messageId: `<${i}>`,
+        accepted: ['a@x.net'],
+      });
     }
     // `b` was the oldest by then, so it is the one that went.
     expect(registry.find('send_mail:b')).toBeUndefined();

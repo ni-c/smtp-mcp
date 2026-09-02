@@ -24,7 +24,8 @@
 /** What is remembered about a message that went out. */
 export interface SentMessage {
   messageId: string;
-  accepted: number;
+  /** The addresses the SMTP server took, so a repeat answers what the first did. */
+  accepted: string[];
 }
 
 /**
@@ -69,7 +70,7 @@ export class SentRegistry {
       this.sent.delete(key);
       return undefined;
     }
-    return { messageId: entry.messageId, accepted: entry.accepted };
+    return { messageId: entry.messageId, accepted: [...entry.accepted] };
   }
 
   /** Remembers a message the SMTP server accepted. */

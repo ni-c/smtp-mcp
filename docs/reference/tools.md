@@ -3,6 +3,13 @@
 Seven tools. Four are always registered and none of them can put a message on the wire; three
 send, and those are registered only when `SMTP_ALLOW_SEND=true`.
 
+Every tool declares an `outputSchema` and answers with `structuredContent`
+beside the text block, so a client can use a result without parsing prose.
+`preview_mail` is the one that carries `untrusted: true` and `source: "smtp"`
+fields — a quoted original was written by whoever sent it, and anyone in the
+world can send mail. Its text block keeps the nonce fence; the structured half
+states the same fields rather than making a client parse it.
+
 `SMTP_ALLOW_TOOLS` and `SMTP_DENY_TOOLS` narrow the list further — see
 [choosing the tools that load](/guide/configuration#choosing-the-tools-that-load). A tool that is
 filtered out is not built: it is absent from `tools/list` and a call answers "not found".

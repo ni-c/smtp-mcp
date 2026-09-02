@@ -205,6 +205,31 @@ Registered only with `SMTP_ALLOW_SEND=true`. 👤 marks the ones that ask a huma
 | `reply_mail` 👤   | Sends a reply that threads under the original, deriving `Re: ` from the subject. |
 | `forward_mail` 👤 | Forwards a message to new recipients, quoting the original verbatim.             |
 
+### Structured output
+
+Every tool declares an `outputSchema` and answers with `structuredContent`
+alongside the text block, so a client can use the result without parsing prose:
+
+```jsonc
+{
+  "sent": true,
+  "already_sent": false,
+  "message_id": "<b1c9…@example.net>",
+  "accepted": ["her@example.net", "him@example.net"],
+  "rejected": [],
+  "bytes": 1284,
+  "sends_remaining_this_hour": 9,
+  "note": "The SMTP server accepted the message. It cannot be recalled.",
+}
+```
+
+`preview_mail` is the one tool that carries `untrusted: true` and
+`source: "smtp"` as fields: a quoted original was written by whoever sent it,
+and anyone in the world can send mail. Its text block keeps the nonce fence —
+the structured half states the same fields so a client is not made to parse it.
+Everything else here reports this server's own configuration or the outcome of
+its own send, where the marker would be a false claim about who wrote it.
+
 ## Not exposed, on purpose
 
 - **A `from` parameter.** The sender is `SMTP_FROM` and nothing else.
