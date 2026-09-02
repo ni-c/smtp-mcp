@@ -91,21 +91,28 @@ not being shown.
 ## At most once
 
 An approval proves that a person agreed to *this* message. It does not prove they agreed to it
-*twice* — an approval stays redeemable until it expires, so a retried tool call carrying the same
-one would send a second copy.
+*twice*: the fingerprint binds the answer to the question, and nothing in it counts how often
+that answer has been spent.
 
-A message the SMTP server accepted is therefore remembered, by the same fingerprint the approval
-is bound to, for as long as an approval for it could still be spent. An identical send inside
-that window is answered with the earlier Message-ID: nobody is asked again, nothing goes out, no
-quota is used. Outside it the same text sends normally.
+That matters here more than anywhere else in this family. Everywhere else the guarded operation
+is idempotent — deleting an already-deleted note changes nothing — while a second `send_mail`
+reaches a person, and neither copy can be recalled. And a tool call is at-least-once by nature:
+a client whose request times out and retries, a host that reconnects mid-flow, a model that
+repeats itself.
+
+So a message the SMTP server accepted is remembered, under the same fingerprint the approval is
+bound to, for as long as an approval for it could still be spent. An identical send inside that
+window is answered with the earlier Message-ID: nobody is asked again, nothing goes out, no quota
+is used. Outside it the same text sends normally.
 
 ::: warning One path can still deliver twice
 If the connection fails **after** the end of `DATA` and before the server's `250`, nobody can
-tell whether the message went out. The slot is kept and an audit line is written saying the
-outcome is unknown — but the message is not remembered as sent, because most failures there are
-real failures and blocking the retry would be the wrong trade. A retry after that particular
-error is the one case where two copies can arrive. See
-[SECURITY.md](https://github.com/ni-c/smtp-mcp/blob/main/SECURITY.md).
+tell whether the message went out. The rate-limit slot is kept and an audit line is written
+saying the outcome is unknown — but the message is not remembered as sent, because most failures
+there are real failures and blocking the retry would be the wrong trade. A retry after that
+particular error is the one case where two copies can arrive. See
+[SECURITY.md](https://github.com/ni-c/smtp-mcp/blob/main/SECURITY.md), which also records which
+protocol revision exposes a replayable approval and what to check the day this server speaks it.
 :::
 
 ## Quoted originals

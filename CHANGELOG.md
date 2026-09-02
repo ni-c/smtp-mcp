@@ -48,11 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **At most once.** A message the SMTP server accepted is remembered, by the same fingerprint the
   approval is bound to, for as long as an approval for it could still be redeemed; an identical
   send inside that window is answered with the earlier Message-ID instead of going out again. An
-  approval proves that somebody agreed to a message, not that they agreed to it a second time,
-  and `send_mail` is the one operation in this family that is not idempotent. The residual case —
-  a connection lost after the end of `DATA`, where the outcome is genuinely unknown — keeps the
-  rate-limit slot and writes an audit line saying so, and is documented in SECURITY.md rather
-  than covered over.
+  approval proves that somebody agreed to a message, not that they agreed to it a second time —
+  and a tool call is at-least-once by nature, so a client that times out and retries, a host that
+  reconnects or a model that repeats itself would otherwise send a second copy. `send_mail` is
+  the one operation in this family that is not idempotent. SECURITY.md records which protocol
+  revision exposes a replayable approval, which one this server actually negotiates, and what to
+  check the day that changes. The residual case — a connection lost after the end of `DATA`,
+  where the outcome is genuinely unknown — keeps the rate-limit slot and writes an audit line
+  saying so, rather than being covered over.
 - The confirmation dialog shows the **body**, and the quoted original and HTML part when set,
   each labelled with its length in characters. Every other layer binds the envelope; nothing
   looked at what the message said.

@@ -848,6 +848,31 @@ describe('send_mail on the 2026-07-28 revision', () => {
     await harness.close();
   });
 
+  it('will not spend the same answer twice', async () => {
+    // The gap this closes, on the transport shape that actually exposes it.
+    // Here the approval is a `requestState` the client holds and resends, and
+    // `mcp-approval` binds it without dating it — the same seal is redeemable
+    // until it expires. `src/index.ts` connects a plain StdioServerTransport
+    // today and therefore negotiates 2025-11-25, where the dialog never leaves
+    // the tool call and there is nothing to replay; this is one line away from
+    // being the production path, and a second copy cannot be recalled.
+    const harness = await connectModern({ config: { allowSend: true } });
+    const asked = await harness.send(sendArgs());
+    const first = await harness.send(sendArgs(), {
+      inputResponses: accepted,
+      requestState: asked.requestState,
+    });
+    expect(first.resultType).not.toBe('input_required');
+
+    const replayed = await harness.send(sendArgs(), {
+      inputResponses: accepted,
+      requestState: asked.requestState,
+    });
+    expect(textOf(replayed as never)).toMatch(/already_sent/);
+    expect(harness.smtp.delivered).toHaveLength(1);
+    await harness.close();
+  });
+
   it('asks again rather than sending when the answer carries no state', async () => {
     // The whole point of asking a human: without a seal this bare object would
     // be all it took to send mail, and anything that can shape a tool call can

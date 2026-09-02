@@ -117,33 +117,41 @@ the sharpest non-idempotent operation in the whole family.
 **How the three paths stand today — measured, not assumed.** Recorded against the built entry
 point over real stdio on 2026-09-02:
 
-| Path                                  | Can the same approval be spent twice?                                       |
-| ------------------------------------- | --------------------------------------------------------------------------- |
-| Elicitation on `2025-11-25`           | No. The dialog is a server→client request _inside_ one `tools/call`.        |
-| Two-call token                        | No. `ConfirmationStore.consume` deletes the token on success.               |
-| Elicitation on `2026-07-28`           | Would be yes — and this server does not speak that revision.                |
+| Path                                           | Can the same approval be spent twice?                                |
+| ---------------------------------------------- | -------------------------------------------------------------------- |
+| Elicitation on `2025-11-25` (what ships today) | No. The dialog is a server→client request _inside_ one `tools/call`. |
+| Two-call token                                 | No. `ConfirmationStore.consume` deletes the token on success.        |
+| Elicitation on `2026-07-28` (`serveStdio`)     | **Yes** — the `requestState` is held by the client and resent.       |
 
 `src/index.ts` connects a plain `StdioServerTransport`, and `SUPPORTED_PROTOCOL_VERSIONS` in the
 installed SDK is `2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07`. A client that
-_asks_ for `2026-07-28` is answered with `2025-11-25`. On that revision the recording shows one
+_asks_ for `2026-07-28` is answered with `2025-11-25`; on that revision the recording shows one
 `tools/call`, one response, an `elicitation/create` in between, and **no `requestState` anywhere
-on the wire**. There is nothing a client could send a second time.
+on the wire**. So the third row is not reachable through the binary this repository ships.
 
-**What is nevertheless guarded, and why.** A tool call is at-least-once by nature, and that has
-nothing to do with the protocol revision: a client whose request times out and retries, a host
-that reconnects mid-flow, a model that repeats itself. Any of those sends the message again, with
-nobody asked and nothing to notice it afterwards. So a message the SMTP server accepted is
-remembered — under the same fingerprint the approval is bound to — for as long as an approval for
-it could still be redeemed, and an identical send inside that window is answered with the earlier
-Message-ID instead of going out. Nobody is asked again and no quota is spent. Outside the window
-the same text sends normally: somebody who deliberately repeats a message an hour later is not
-the case this guards against, and silently swallowing it would be a worse failure than sending it.
+It is reachable through the SDK, though. `serveStdio` implements the newer revision, the answer
+comes back as a `requestState` the client holds, and `mcp-approval` binds that seal without
+dating it. Choosing `serveStdio` in `src/index.ts` is a one-line change, and
+`test/send.test.ts` demonstrates the consequence on exactly that transport: replaying one
+accepted answer used to deliver a second copy.
 
-**The day this server speaks `2026-07-28`.** On that revision the elicitation is not a push but a
-return value: the handler answers `input_required`, the call ends, the person decides, and the
-client retries carrying a `requestState` that now really does travel over the wire — and stays
-valid until it expires. The record above is then load-bearing rather than defensive, and three
-things have to be true at once, so check them together:
+**And the narrower reason, which does not depend on the revision at all.** A tool call is
+at-least-once by nature: a client whose request times out and retries, a host that reconnects
+mid-flow, a model that repeats itself. Any of those sends the message again today, with nobody
+asked and nothing to notice it afterwards.
+
+So a message the SMTP server accepted is remembered — under the same fingerprint the approval is
+bound to — for as long as an approval for it could still be redeemed, and an identical send
+inside that window is answered with the earlier Message-ID instead of going out. Nobody is asked
+again and no quota is spent. Outside the window the same text sends normally: somebody who
+deliberately repeats a message an hour later is not the case this guards against, and silently
+swallowing it would be a worse failure than sending it twice.
+
+**The day `src/index.ts` speaks `2026-07-28`.** On that revision the elicitation is not a push but
+a return value: the handler answers `input_required`, the call ends, the person decides, and the
+client retries carrying a `requestState` that really does travel over the wire — and stays valid
+until it expires. The record above becomes the only thing standing in the way, so three things
+have to be true at once. Check them together:
 
 1. The record is written **before** the tool result is returned, not after, so a client that
    never receives the result still cannot re-spend the approval.
@@ -156,9 +164,11 @@ things have to be true at once, so check them together:
    restart. That deployment needs a shared store, and until it has one it must not offer the
    newer revision.
 
-A test that proves it has to drive the real thing: `test/harness.ts` already has `connectModern`,
-which serves the server through `serveStdio` with `autoFulfill: false`, so a test can hand the
-same answer back twice and assert `smtp.delivered` has length one.
+A test that proves it has to drive the real thing rather than the in-memory pair.
+`test/harness.ts` has `connectModern`, which serves the server through `serveStdio` with
+`autoFulfill: false`; "will not spend the same answer twice" in `test/send.test.ts` hands the same
+`requestState` back twice and asserts one delivery. Keep that test green when the entry point
+changes — it is the one that fails first.
 
 **The residual case, stated rather than hidden.** If the connection fails _after_ the end of
 `DATA` and before the SMTP server's `250`, the outcome is genuinely unknown at this layer —
