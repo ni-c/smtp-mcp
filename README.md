@@ -7,6 +7,7 @@
 [![license](https://img.shields.io/npm/l/%40ni-c%2Fsmtp-mcp)](LICENSE)
 [![container](https://img.shields.io/badge/ghcr.io-ni--c%2Fsmtp--mcp-blue)](https://github.com/ni-c/smtp-mcp/pkgs/container/smtp-mcp)
 [![docs](https://img.shields.io/badge/docs-smtp--mcp.ni--c.de-informational)](https://smtp-mcp.ni-c.de)
+[![HTTP • via mcp-hub](https://img.shields.io/badge/HTTP-via%20mcp--hub-6f42c1)](https://mcp-hub.ni-c.de)
 [![sponsor](https://img.shields.io/badge/sponsor-ni--c-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ni-c)
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for
@@ -186,6 +187,40 @@ docker run --rm -i \
 If you run several of these servers at once, [mcp-hub](https://mcp-hub.ni-c.de) is the other
 answer — its `/hub` endpoint replaces every server's tools with six meta-tools.
 
+### Through mcp-hub
+
+A client that cannot spawn a local process — ChatGPT connectors, Claude on the web,
+Cursor, LibreChat — reaches smtp-mcp through [mcp-hub](https://mcp-hub.ni-c.de): one
+container serves many stdio MCP servers over Streamable HTTP, with an OAuth 2.1 login
+behind a single password and long-lived tokens for the clients that cannot do OAuth. Its
+`/hub` endpoint puts every server behind six meta-tools, so one connector reaches all of
+them without N×tool schemas in the model's context, and it speaks both protocol revisions
+— a question this server asks travels through it to the person at the far end.
+
+Its `/config/mcp.json` uses Claude Code's format, so the entry is the one you already
+have:
+
+```json
+{
+  "mcpServers": {
+    "smtp-mcp": {
+      "command": "npx",
+      "args": ["-y", "@ni-c/smtp-mcp"],
+      "env": {
+        "SMTP_HOST": "smtp.example.net",
+        "SMTP_USER": "person@example.net",
+        "SMTP_PASSWORD": "…",
+        "SMTP_FROM": "Your Name <person@example.net>"
+      }
+    }
+  }
+}
+```
+
+`allowTools` and `denyTools` there are the hub's **own** per-server filter, which is not
+the same thing as `*_ALLOW_TOOLS` in `env` — the difference, and the mistake it invites,
+are in the [client guide](https://smtp-mcp.ni-c.de/guide/clients#through-mcp-hub).
+
 ## Tools
 
 Always registered. None of these can put a message on the wire.
@@ -272,6 +307,11 @@ its own send, where the marker would be a false claim about who wrote it.
 
 See [SECURITY.md](SECURITY.md) for the reasoning, and for what none of this covers.
 
+## Documentation
+
+The full guide, tool reference and security notes live at
+**[smtp-mcp.ni-c.de](https://smtp-mcp.ni-c.de)** (source in [`docs/`](docs/)).
+
 ## Development
 
 ```sh
@@ -296,6 +336,13 @@ publishes to npm with provenance through Trusted Publishing, pushes a multi-arch
 with an SBOM, creates the GitHub release from the CHANGELOG section, and submits the version to
 the MCP Registry.
 
+## Contributing
+
+Issues, discussions and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). For vulnerabilities please use
+[private reporting](https://github.com/ni-c/smtp-mcp/security/advisories/new)
+rather than a public issue; the policy is in [SECURITY.md](SECURITY.md).
+
 ## License
 
-MIT © Willi Thiel
+[MIT](LICENSE) © Willi Thiel
