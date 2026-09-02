@@ -1,3 +1,4 @@
+import type { CallToolResult } from '@modelcontextprotocol/client';
 import { describe, expect, it } from 'vitest';
 
 import { SmtpError } from '../src/errors.js';
@@ -260,10 +261,15 @@ describe('what the far side can put in the model context', () => {
       .catch((e: unknown) => e)) as SmtpError;
 
     // The reply half is recognised as a page and thrown away by run().
+    //
+    // `run` answers with `CallToolResult | InputRequiredResult`. The callback
+    // here only throws, so the error half is the one that comes back and never
+    // an input request; the cast says that rather than widening `textOf`, which
+    // every other caller hands a real tool result.
     const shown = textOf(
-      await run(async () => {
+      (await run(async () => {
         throw error;
-      })
+      })) as CallToolResult
     );
     expect(shown).toContain('(HTML error page omitted)');
     // And the whole result stays small, rather than carrying 100 kB of prose.
