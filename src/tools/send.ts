@@ -31,6 +31,7 @@ import { audit } from '../audit.js';
 import type { RateLimitSlot } from '../ratelimit.js';
 import { ToolInputError } from '../errors.js';
 import { jsonResult, run } from '../result.js';
+import { htmlToText } from '../sanitize.js';
 import type { ToolContext } from './context.js';
 
 const MAX_SUBJECT = 255;
@@ -200,6 +201,19 @@ async function withSlot(
       value: value === '' ? '(empty)' : value,
     });
   }
+  if (prepared.composed.htmlBody !== undefined) {
+    // The HTML part as the recipient will read it, not as it is written. The
+    // first 200 characters of markup are mostly tags, so the line above shows
+    // the human almost nothing of what an HTML client will display — and on a
+    // message with no plain body, that display *is* the message. The text is
+    // derived from the sanitised part, the same way the text/plain alternative
+    // is derived when the body is empty.
+    const asText = htmlToText(prepared.composed.htmlBody);
+    details.push({
+      label: `HTML part as the recipient reads it (${asText.length} characters)`,
+      value: asText === '' ? '(empty)' : asText,
+    });
+  }
   if (prepared.attachments.length > 0) {
     details.push({
       label: 'Attachments',
@@ -208,24 +222,42 @@ async function withSlot(
         .join(', '),
     });
   }
+  if (prepared.composed.htmlRemoved.length > 0) {
+    // A detail rather than part of the consequence, and not for tidiness:
+    // `mcp-approval` flattens and caps every detail value and leaves the
+    // consequence alone, and this list carries caller-derived text — a scheme
+    // name is whatever the caller wrote before the colon.
+    details.push({
+      label: 'Removed from the HTML part before sending',
+      value: prepared.composed.htmlRemoved.join(', '),
+    });
+  }
 
   let consequence =
     'Mail cannot be recalled once the SMTP server has accepted it.';
-  if (prepared.suspiciousQuote.length > 0) {
+  for (const { field, patterns } of prepared.suspicious) {
     // Server-authored text naming server-authored constants: the pattern names
-    // are ours, the quoted text is not repeated here. The person approving a
-    // forward deserves to know the thing they are forwarding tries to give
-    // orders, without that text getting a second chance to be read as one.
+    // are ours, the matched text is not repeated here. The two readings differ
+    // and the sentence has to say which one this is. A quote that gives orders
+    // is a forwarded message that tries to — passed on unchanged, correctly. A
+    // body or HTML part that gives orders is the model writing them, which is
+    // what such a quote was trying to make happen.
+    const shapes = `${patterns.length} known prompt-injection shape(s): ${patterns.join(', ')}`;
     consequence +=
-      `\n\nNote: the quoted original matches ${prepared.suspiciousQuote.length} ` +
-      `known prompt-injection shape(s): ${prepared.suspiciousQuote.join(', ')}. ` +
-      'It is being passed on unchanged, which is correct for a quote — but ' +
-      'check who asked for this message to be sent.';
+      field === 'quote'
+        ? `\n\nNote: the quoted original matches ${shapes}. It is being passed ` +
+          'on unchanged, which is correct for a quote — but check who asked for ' +
+          'this message to be sent.'
+        : `\n\nWARNING: the ${field === 'body' ? 'body' : 'HTML part'} — text ` +
+          `the model wrote itself — matches ${shapes}. That is not a forwarded ` +
+          'message giving orders; it is this message giving them. Check who ' +
+          'asked for it before approving.';
   }
-  if (prepared.composed.htmlRemoved.length > 0) {
+  if (prepared.textHtmlDiverge) {
     consequence +=
-      `\n\nRemoved from the HTML part before sending: ` +
-      `${prepared.composed.htmlRemoved.join(', ')}.`;
+      '\n\nNote: the plain-text body and the HTML part say different things. ' +
+      'Most recipients see only the HTML part; read the "HTML part as the ' +
+      'recipient reads it" line, not just the body.';
   }
 
   const outcome = await ctx.approval.requestApproval(
