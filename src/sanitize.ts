@@ -51,16 +51,49 @@ const MAX_BLOCK_CHARS = 4_000;
  */
 const ATTRS = String.raw`(?:"[^"]{0,2000}"|'[^']{0,2000}'|[^"'<>]){0,2000}`;
 
+/**
+ * The elements that may not survive, in one list.
+ *
+ * The two removal patterns below and the final refusal check are all built from
+ * it. The refusal check used to carry a *shorter* list, and that gap was a
+ * hole: `<link a=b<c rel=stylesheet href=https://…>` fails the tag pattern (the
+ * unquoted `<` ends the attribute run), was not on the refusal list, and so went
+ * out whole — a remote stylesheet fetch, which is a beacon. Anything a pass
+ * tries to remove is something the message must not leave with.
+ */
+const BLOCK_ELEMENTS =
+  'script|style|iframe|object|embed|applet|noscript|template|form|svg|math';
+const VOID_ELEMENTS = 'base|link|meta|frame|frameset';
+
 /** Elements dropped together with their contents. */
 const DANGEROUS_BLOCK = new RegExp(
-  `<(script|style|iframe|object|embed|applet|noscript|template|form|svg|math)\\b${ATTRS}>[\\s\\S]{0,${MAX_BLOCK_CHARS}}?<\\/\\1\\s*>`,
+  `<(${BLOCK_ELEMENTS})\\b${ATTRS}>[\\s\\S]{0,${MAX_BLOCK_CHARS}}?<\\/\\1\\s*>`,
   'gi'
 );
 /** The same elements when they are left unclosed, plus the void ones. */
 const DANGEROUS_VOID = new RegExp(
-  `<\\/?(script|style|iframe|object|embed|applet|noscript|template|form|svg|math|base|link|meta|frame|frameset)\\b${ATTRS}>`,
+  `<\\/?(${BLOCK_ELEMENTS}|${VOID_ELEMENTS})\\b${ATTRS}>`,
   'gi'
 );
+
+/**
+ * Where an attribute may begin.
+ *
+ * `\s` alone was the hole. An HTML tokenizer starts a new attribute after
+ * whitespace, but also directly after a `/` and directly after the closing
+ * quote of the previous value: `<img/src=…>` and `<img alt="x"src=…>` both carry
+ * a `src`, and every attribute pattern below used to look for a space in front
+ * of the name and so saw neither. A tracking pixel written either way went out
+ * with the operator's DKIM signature while the dialog reported nothing removed.
+ *
+ * Whitespace is consumed so the removal does not leave a stray space behind;
+ * the other two boundaries are matched with a lookbehind so the character
+ * itself — which belongs to the previous attribute — stays where it is.
+ */
+const ATTR_START = String.raw`(?:\s+|(?<=[/"']))`;
+
+/** An attribute value in any of the three quoting styles. */
+const ATTR_VALUE = String.raw`(?:"([^"]*)"|'([^']*)'|([^\s<>]+))`;
 
 /**
  * Elements a mail client fetches on its own. Removing them is the difference
@@ -91,15 +124,37 @@ const REMOTE_SUBRESOURCE = new RegExp(
  * descriptors, so every candidate is checked rather than the attribute value as
  * a whole.
  */
-const SUBRESOURCE_URL_ATTRIBUTE =
-  /\s(src|srcset|imagesrcset|poster|background)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s<>]+))/gi;
+const SUBRESOURCE_URL_ATTRIBUTE = new RegExp(
+  `${ATTR_START}(src|srcset|imagesrcset|poster|background)\\s*=\\s*${ATTR_VALUE}`,
+  'gi'
+);
 
 /** Attributes that run script when the recipient does anything at all. */
-const EVENT_HANDLER = /\son[a-z]{1,20}\s*=\s*(?:"[^"]*"|'[^']*'|[^\s<>]+)/gi;
+const EVENT_HANDLER = new RegExp(
+  `${ATTR_START}on[a-z]{1,20}\\s*=\\s*${ATTR_VALUE}`,
+  'gi'
+);
 
 /** URL-valued attributes whose scheme has to be checked. */
-const URL_ATTRIBUTE =
-  /\s(href|src|action|formaction|data|poster|background|cite)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s<>]+))/gi;
+const URL_ATTRIBUTE = new RegExp(
+  `${ATTR_START}(href|src|action|formaction|data|poster|background|cite)\\s*=\\s*${ATTR_VALUE}`,
+  'gi'
+);
+
+/**
+ * Inline styles, checked as a whole.
+ *
+ * A style attribute is a second language inside the first, with its own
+ * escaping: `u\72l(` is `url(` to a CSS parser, and `image-set()` fetches just
+ * as `url()` does. So the value is decoded the way a CSS parser would decode it
+ * and searched for anything that fetches; if it does, the attribute goes,
+ * because there is no honest way to keep half a declaration.
+ */
+const STYLE_ATTRIBUTE = new RegExp(
+  `${ATTR_START}style\\s*=\\s*${ATTR_VALUE}`,
+  'gi'
+);
+const CSS_FETCH = /(?:\burl|\bimage-set|\bimage|\bsrc)\s*\(|@import\b/i;
 
 /**
  * What must not be in the finished string, whatever the passes above did.
@@ -115,27 +170,127 @@ const URL_ATTRIBUTE =
  * human as "removed before sending", and the only way it can name something
  * that is still in the message is if the message is not sent at all.
  */
-const FORBIDDEN_AFTER_SANITIZING =
-  /<\s*\/?\s*(script|style|iframe|object|embed|applet|form|svg|math)\b/i;
+const FORBIDDEN_AFTER_SANITIZING = new RegExp(
+  `<\\s*\\/?\\s*(${BLOCK_ELEMENTS}|${VOID_ELEMENTS})\\b`,
+  'i'
+);
 
-/** `url(...)` inside a style attribute — another way to fetch a remote asset. */
+/** `url(...)` anywhere at all — the net under the style-attribute pass. */
 const CSS_URL = /url\s*\(\s*(['"]?)[^)'"]{0,2000}\1\s*\)/gi;
 
 const SAFE_SCHEMES = ['http:', 'https:', 'mailto:', 'tel:', 'cid:'];
 
+/**
+ * The named character references that can spell a scheme or a separator.
+ *
+ * Not the whole HTML5 table — only what can turn a harmless-looking value into
+ * `https://` or `javascript:` once the client decodes it. Being too eager here
+ * costs a removal; being too lax is the hole.
+ */
+const NAMED_REFERENCES: Readonly<Record<string, string>> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  colon: ':',
+  sol: '/',
+  bsol: '\\',
+  num: '#',
+  period: '.',
+  tab: '\t',
+  newline: '\n',
+  nbsp: ' ',
+};
+
+/**
+ * Decodes character references the way an attribute value is decoded before a
+ * client reads it as a URL.
+ *
+ * `&#104;ttps://` and `https&colon;//` are `https://` to every mail client, and
+ * `&#106;avascript:` is `javascript:`; none of them contains a scheme until
+ * this has run. Numeric references decode with or without the semicolon, as
+ * the HTML tokenizer does in an attribute. Named ones need it, except the few
+ * legacy names that never did.
+ */
+export function decodeReferences(value: string): string {
+  return value
+    .replace(/&#[xX]([0-9a-fA-F]{1,6});?/g, (_m, hex: string) =>
+      codePoint(parseInt(hex, 16))
+    )
+    .replace(/&#([0-9]{1,7});?/g, (_m, dec: string) =>
+      codePoint(parseInt(dec, 10))
+    )
+    .replace(
+      /&([a-zA-Z]{1,8})(;?)/g,
+      (match, name: string, terminator: string) => {
+        const decoded = NAMED_REFERENCES[name.toLowerCase()];
+        if (decoded === undefined) return match;
+        // Without the semicolon only the legacy names decode.
+        if (terminator === '' && !/^(amp|lt|gt|quot)$/i.test(name)) {
+          return match;
+        }
+        return decoded;
+      }
+    );
+}
+
+function codePoint(value: number): string {
+  if (!Number.isFinite(value) || value <= 0 || value > 0x10ffff) return '';
+  return String.fromCodePoint(value);
+}
+
+/**
+ * Decodes CSS escapes: `\72` is `r`, `\0072 ` is `r`, and a backslash before a
+ * non-hex character is that character. A style attribute is decoded once as
+ * HTML and once as CSS, in that order, because that is the order a client
+ * applies.
+ */
+export function decodeCssEscapes(value: string): string {
+  return decodeReferences(value)
+    .replace(/\\([0-9a-fA-F]{1,6})\s?/g, (_m, hex: string) =>
+      codePoint(parseInt(hex, 16))
+    )
+    .replace(/\\([^\r\n0-9a-fA-F])/g, '$1');
+}
+
+/**
+ * The value as a URL parser would see it: references decoded, then the
+ * characters a parser strips before reading the scheme — whitespace, C0
+ * controls and DEL — removed.
+ *
+ * Stripping them everywhere rather than only at the edges is deliberate:
+ * `java\tscript:` is `javascript:` to a browser and to several mail clients.
+ */
+function urlView(value: string): string {
+  return (
+    decodeReferences(value)
+      // eslint-disable-next-line no-control-regex -- matching them is the point
+      .replace(/[\s\u0000-\u001f\u007f]/g, '')
+      .toLowerCase()
+  );
+}
+
 function schemeOf(value: string): string | undefined {
-  // Leading whitespace and control characters are stripped by parsers before
-  // the scheme is read, so `java\tscript:` is `javascript:` to a browser and to
-  // several mail clients. Strip them here too rather than after the match.
-  // eslint-disable-next-line no-control-regex -- matching them is the point
-  const trimmed = value.replace(/[\s\u0000-\u001f\u007f]/g, '').toLowerCase();
-  const match = /^([a-z][a-z0-9+.-]*:)/.exec(trimmed);
+  const match = /^([a-z][a-z0-9+.-]*:)/.exec(urlView(value));
   return match?.[1];
 }
 
+/**
+ * Whether a client would fetch this over the network.
+ *
+ * A scheme of `http:` or `https:`, or no scheme and a network-path start. The
+ * WHATWG parser treats `\` as `/` under the special schemes a mail client
+ * renders with, so `\\tracker.example/p.gif` and `/\tracker.example/p.gif` are
+ * `//tracker.example/p.gif` — the same protocol-relative fetch as two slashes.
+ */
 function isRemote(value: string): boolean {
   const scheme = schemeOf(value);
-  return scheme === 'http:' || scheme === 'https:' || value.startsWith('//');
+  return (
+    scheme === 'http:' ||
+    scheme === 'https:' ||
+    /^[\\/]{2}/.test(urlView(value))
+  );
 }
 
 /**
@@ -162,6 +317,15 @@ function remoteSubresourceAttribute(element: string): string | undefined {
     if (hasRemoteCandidate(value)) return match[1]?.toLowerCase();
   }
   return undefined;
+}
+
+/** How much of a caller-chosen scheme is named in the removal list. */
+const MAX_SCHEME_SHOWN = 24;
+
+function abbreviate(scheme: string): string {
+  return scheme.length > MAX_SCHEME_SHOWN
+    ? `${scheme.slice(0, MAX_SCHEME_SHOWN)}…`
+    : scheme;
 }
 
 export interface SanitizedHtml {
@@ -233,7 +397,7 @@ export function sanitizeHtml(input: string): SanitizedHtml {
 
   html = html.replace(EVENT_HANDLER, (match) => {
     removed.add(
-      `${/\son([a-z]+)/i.exec(match)?.[1]?.toLowerCase() ?? 'event'} handler`
+      `${/^\s*on([a-z]+)/i.exec(match)?.[1]?.toLowerCase() ?? 'event'} handler`
     );
     return '';
   });
@@ -244,7 +408,19 @@ export function sanitizeHtml(input: string): SanitizedHtml {
     // No scheme at all is a relative URL, which is meaningless in mail and
     // harmless. A scheme that is not on the list is the interesting case.
     if (scheme === undefined || SAFE_SCHEMES.includes(scheme)) return match;
-    removed.add(`${scheme} URL in ${attribute.toLowerCase()}`);
+    // The scheme is caller-chosen and, unlike everything else in this list,
+    // not bounded by a fixed vocabulary — a 60 kB "scheme" is a legal match.
+    // This list is read out in the confirmation dialog, so it is cut here.
+    removed.add(`${abbreviate(scheme)} URL in ${attribute.toLowerCase()}`);
+    return '';
+  });
+
+  // The whole inline style, decoded as a CSS parser would decode it. `u\72l(`
+  // is `url(` after that, and the global pass below would never see it.
+  html = html.replace(STYLE_ATTRIBUTE, (match, ...groups) => {
+    const value = (groups[0] ?? groups[1] ?? groups[2] ?? '') as string;
+    if (!CSS_FETCH.test(decodeCssEscapes(value))) return match;
+    removed.add('url() in a style attribute');
     return '';
   });
 

@@ -138,4 +138,7 @@ Every accepted message is written to stderr as an audit line with the recipients
 Message-ID and the size. Set `SMTP_AUDIT_LOG` to keep a copy in a file, which is what makes the
 record outlive the terminal window your client was started in.
 
+Refused sends are recorded too — `outcome=refused`, `declined` or `token_rejected` — because a
+session that is being steered mostly produces refusals, and those are the evidence.
+
 Bodies are never recorded — that would turn the log into a second copy of your correspondence.

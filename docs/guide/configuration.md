@@ -92,6 +92,12 @@ file **inside** it — a plain filename, no path — and everything else is refu
 `..`, leading dots, symlinks, extensions outside `SMTP_ATTACHMENT_TYPES`, executable extensions,
 and anything whose leading bytes say it is a binary regardless of what it is called.
 
+The default type list is documents and images. Two things are deliberately not on it and have to
+be written into `SMTP_ATTACHMENT_TYPES` by hand: `text/html`, because an HTML *file* opens in a
+browser with none of a mail client's restrictions and none of the sanitising the HTML *part* of a
+message gets — the phishing shape called HTML smuggling — and `application/zip`, because an archive
+passes the magic-byte check on its own bytes and can carry an executable the check never sees.
+
 The directory is the only source of the path. A caller cannot choose which part of your disk gets
 mailed out.
 
@@ -103,6 +109,11 @@ hide it when quoting a reply.
 `SMTP_AUDIT_LOG` names a file that receives a copy of every audit line. Those lines always go to
 stderr; the file is what makes the record outlive the terminal the client was started in. It
 holds the recipients, the subject, the Message-ID and the size — never the body.
+
+Refused sends are written down too, marked `outcome=refused`, `declined` or `token_rejected`,
+with the recipients and the subject that were asked for. A session that is being steered mostly
+produces refusals — an address off the allowlist, a token that did not match — and those lines
+are what shows it was being steered.
 
 ## Turning the approval dialog off
 

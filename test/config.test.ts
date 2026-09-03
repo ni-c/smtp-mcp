@@ -272,3 +272,25 @@ describe('missingConfigMessage', () => {
     expect(message).toContain('SMTP_ALLOWED_RECIPIENTS');
   });
 });
+
+describe('the default attachment types', () => {
+  it('leave out the two shapes that carry a payload past the other checks', async () => {
+    const { DEFAULT_ATTACHMENT_TYPES } = await import('../src/config.js');
+    // An HTML file opens in a browser and gets none of the sanitising the HTML
+    // part does; an archive passes the magic-byte check on its own bytes.
+    expect(DEFAULT_ATTACHMENT_TYPES).not.toContain('text/html');
+    expect(DEFAULT_ATTACHMENT_TYPES).not.toContain('application/zip');
+    expect(DEFAULT_ATTACHMENT_TYPES).toContain('application/pdf');
+  });
+
+  it('can be widened back by the operator, in writing', async () => {
+    const { loadConfig } = await import('../src/config.js');
+    const config = loadConfig({
+      SMTP_ATTACHMENT_TYPES: 'application/pdf, text/html',
+    } as NodeJS.ProcessEnv);
+    expect(config.allowedAttachmentTypes).toEqual([
+      'application/pdf',
+      'text/html',
+    ]);
+  });
+});

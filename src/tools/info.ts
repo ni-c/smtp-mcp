@@ -19,7 +19,11 @@ import { sanitizeText } from '../analyze.js';
 import { READ_ONLY } from './annotations.js';
 import { allowedExtensions } from '../attachments.js';
 import { missingConfigKeys } from '../config.js';
-import { prepareMessage, type PreparedMessage } from '../prepare.js';
+import {
+  prepareMessage,
+  suspiciousPatterns,
+  type PreparedMessage,
+} from '../prepare.js';
 import { describeAllowlist, isAllowed } from '../recipients.js';
 import { fencedUntrustedResult, jsonResult, run } from '../result.js';
 import { untrustedFields } from '../output-schema.js';
@@ -275,7 +279,20 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
           .describe('What the HTML sanitiser took out.'),
         suspicious: z
           .array(z.string())
-          .describe('Prompt-injection shapes matched in the quoted original.'),
+          .describe(
+            'Prompt-injection shapes matched anywhere in the caller-supplied text.'
+          ),
+        suspicious_in: z
+          .array(z.enum(['quote', 'body', 'html']))
+          .describe(
+            'Which fields matched. "quote" is a forwarded message giving orders; ' +
+              '"body" or "html" is this message giving them.'
+          ),
+        text_html_diverge: z
+          .boolean()
+          .describe(
+            'True when the plain-text body and the HTML part say noticeably different things.'
+          ),
         headers: z.string().describe('The composed header block, verbatim.'),
         text_body: z.string(),
         html_body: z.string().optional().describe('After sanitising.'),
@@ -305,14 +322,16 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         return fencedUntrustedResult(
           header,
           renderPreview(prepared, prepared.composed.htmlBody),
-          prepared.suspiciousQuote,
+          suspiciousPatterns(prepared.suspicious),
           {
             from: config.smtp.from ?? null,
             recipient_count: prepared.composed.envelope.to.length,
             bcc_count: prepared.bcc.length,
             bytes: prepared.composed.bytes,
             html_removed: prepared.composed.htmlRemoved,
-            suspicious: prepared.suspiciousQuote,
+            suspicious: suspiciousPatterns(prepared.suspicious),
+            suspicious_in: prepared.suspicious.map((s) => s.field),
+            text_html_diverge: prepared.textHtmlDiverge,
             headers: headerBlockOf(prepared.composed.raw),
             text_body: sanitizeText(prepared.composed.textBody),
             ...(prepared.composed.htmlBody === undefined

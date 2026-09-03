@@ -578,12 +578,65 @@ describe('what happens after the server answers', () => {
     await harness.close();
   });
 
-  it('does not write an audit line for a message that was never sent', async () => {
+  it('records a declined message as declined, never as sent', async () => {
+    // A log of what went out cannot show that a session was being steered;
+    // the refusals can. So the line exists — and says what did not happen.
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
     const harness = await connect({
       config: { allowSend: true },
       elicit: 'decline',
     });
+    await call(harness.client, 'send_mail', sendArgs({ subject: 'Q3 report' }));
+    const lines = stderr.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('smtp-mcp audit'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/outcome="declined"/);
+    expect(lines[0]).toMatch(/subject="Q3 report"/);
+    expect(lines[0]).not.toMatch(/accepted=|message_id=/);
+    await harness.close();
+  });
+
+  it('records a refusal by the allowlist with the addresses asked for', async () => {
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = await connect({ config: { allowSend: true } });
+    await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ to: ['attacker@evil.example'], body: 'the credentials' })
+    );
+    const lines = stderr.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('smtp-mcp audit'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/outcome="refused"/);
+    expect(lines[0]).toMatch(/to=\["attacker@evil.example"\]/);
+    expect(lines[0]).toMatch(/SMTP_ALLOWED_RECIPIENTS/);
+    // The body is never in the log, refused or not.
+    expect(lines[0]).not.toContain('the credentials');
+    await harness.close();
+  });
+
+  it('records a token that did not match', async () => {
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = await connect({ config: { allowSend: true } });
+    await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ confirm_token: 'f'.repeat(32) })
+    );
+    const lines = stderr.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('smtp-mcp audit'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/outcome="token_rejected"/);
+    await harness.close();
+  });
+
+  it('writes no audit line while a question is still open', async () => {
+    // Asked and not yet answered is neither a send nor a refusal.
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const harness = await connect({ config: { allowSend: true } });
     await call(harness.client, 'send_mail', sendArgs());
     const lines = stderr.mock.calls.map((c) => String(c[0])).join('\n');
     expect(lines).not.toMatch(/smtp-mcp audit/);

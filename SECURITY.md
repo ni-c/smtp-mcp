@@ -228,9 +228,19 @@ candidate of a `srcset` descriptor list separately. `srcset` in particular used 
 untouched, and a `background` on a `<body>` or a `<table>` is a counter just as much as a 1×1
 `<img>` is: it reports the moment a message was opened, from which address, and how often.
 
+**The passes model the tokenizer, not a space.** An attribute may follow whitespace, a `/` or the
+closing quote of the previous value — `<img/src=…>` carries a `src` — so the attribute patterns
+accept all three. A value is read the way a client reads it: character references decoded
+(`&#104;ttps:`, `https&colon;`), whitespace and control characters stripped inside the scheme,
+backslashes read as slashes in a network-path start. An inline style is decoded once more as CSS,
+where `u\72l(` is `url(`, and dropped whole when anything in it fetches. Each of these was a shape
+that went out untouched with an empty removal list before it was covered.
+
 **And the passes can refuse rather than repair.** A regex is not a parser, and the recipient's
 client is; the two can always be made to disagree somewhere. When markup that must not survive
-is still present after every pass has run, the message is rejected instead of sent. For outgoing
+is still present after every pass has run, the message is rejected instead of sent. The refusal
+check is built from the same element list as the removal passes — `<link>`, `<base>` and `<meta>`
+included — so nothing a pass tries to remove can leave. For outgoing
 text that is the right direction — a message that never left can be fixed, a message that
 arrived carrying a script cannot be recalled — and it is what keeps the list of removals honest:
 the dialog can only ever name something that really is gone, because a message where it is not
@@ -248,6 +258,17 @@ the one that cannot be lied to: a binary copied to `report.pdf` clears every oth
 fails there. Sending an executable out under your own name and your own DKIM signature is worse
 than receiving one, because it is trusted on arrival.
 
+For the same reason `text/html` and `application/zip` are not in the default type list. An HTML
+file opens in a browser rather than a mail client and gets none of the sanitising the HTML part of
+a message gets; an archive passes the magic-byte check on its own bytes and can carry the
+executable the check never sees. An operator who needs either writes it into
+`SMTP_ATTACHMENT_TYPES`.
+
+The size and type are checked on the opened file, not only on the path: between the `lstat` and
+the `open`, a writer in the directory could swap the file for a FIFO or grow it past the ceiling,
+so the open is non-blocking, the checks run again on the handle, and the read is capped at the
+size the handle reported.
+
 The name must be a plain filename. Separators, `..` and leading dots are refused rather than
 normalised away, the resolved path is checked against the directory again, symlinks are refused
 outright, and the file is opened with `O_NOFOLLOW` where the platform has it.
@@ -258,6 +279,12 @@ Every message the SMTP server accepts is recorded on stderr — the one channel 
 reads — with the recipients, the subject, the Message-ID and the size. `SMTP_AUDIT_LOG` adds a
 file sink for the same lines, which is what makes the record outlive the terminal window the
 client was started in.
+
+Refusals are recorded as well — `outcome=refused` for an address the allowlist does not cover or
+an attachment that fails its checks, `declined` when the person said no, `token_rejected` when a
+token did not match — with the recipients and subject that were asked for. A log of what went out
+cannot answer the question that matters most after an incident, _was this session being steered?_,
+because a steered session's attempts are mostly refused. The refusals are the evidence.
 
 Bodies are never recorded. The subject is, because without it the log cannot be matched against
 anything; a body would turn the audit file into a second copy of the correspondence.

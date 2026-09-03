@@ -75,28 +75,28 @@ message they wrote.
 > password in the clear. For a self-signed certificate prefer a proper internal CA over
 > `SMTP_INSECURE_TLS`.
 
-| Variable                    | Required                    | Default                      | Description                                                                           |
-| --------------------------- | --------------------------- | ---------------------------- | ------------------------------------------------------------------------------------- |
-| `SMTP_HOST`                 | yes                         | —                            | Hostname of the SMTP server, e.g. `smtp.example.net`.                                 |
-| `SMTP_USER`                 | yes                         | —                            | Username for SMTP authentication.                                                     |
-| `SMTP_PASSWORD`             | yes                         | —                            | Password or app-specific password.                                                    |
-| `SMTP_FROM`                 | yes                         | —                            | The only sender used, e.g. `Name <person@example.net>`. There is no `from` parameter. |
-| `SMTP_PORT`                 | no                          | 587 / 465 / 25               | Depends on `SMTP_TLS`.                                                                |
-| `SMTP_TLS`                  | no                          | `starttls`                   | `starttls`, `implicit` or `none`. Never opportunistic.                                |
-| `SMTP_ALLOW_SEND`           | no                          | `false`                      | Set to `true` to register the sending tools.                                          |
-| `SMTP_ALLOWED_RECIPIENTS`   | with `SMTP_ALLOW_SEND=true` | —                            | Comma-separated addresses and `@domains`. `*` allows anyone.                          |
-| `SMTP_MAX_RECIPIENTS`       | no                          | `10`                         | Distinct recipients across To, Cc and Bcc in one message.                             |
-| `SMTP_MAX_SENDS_PER_HOUR`   | no                          | `20`                         | Sliding hourly cap.                                                                   |
-| `SMTP_MAX_MESSAGE_BYTES`    | no                          | `10485760`                   | Size ceiling on the composed message.                                                 |
-| `SMTP_MAX_ATTACHMENT_BYTES` | no                          | `5242880`                    | Size ceiling on one attachment.                                                       |
-| `SMTP_ATTACHMENT_DIR`       | no                          | —                            | Directory attachments are read from. Unset means no attachments.                      |
-| `SMTP_ATTACHMENT_TYPES`     | no                          | document and image allowlist | Comma-separated content types that may be attached.                                   |
-| `SMTP_SIGNATURE`            | no                          | —                            | Text appended below the standard `-- ` delimiter.                                     |
-| `SMTP_AUDIT_LOG`            | no                          | —                            | File the audit lines are appended to, in addition to stderr.                          |
-| `SMTP_ALLOW_TOOLS`          | no                          | —                            | Tool names, a prefix with one trailing `*`, or `essential`.                           |
-| `SMTP_DENY_TOOLS`           | no                          | —                            | Removed after `SMTP_ALLOW_TOOLS` is applied.                                          |
-| `SMTP_INSECURE_TLS`         | no                          | `false`                      | Accept self-signed certificates.                                                      |
-| `ELICITATION`               | no                          | `true`                       | `false` replaces the approval dialog with the two-call token. **Not prefixed.**       |
+| Variable                    | Required                    | Default                      | Description                                                                                       |
+| --------------------------- | --------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------- |
+| `SMTP_HOST`                 | yes                         | —                            | Hostname of the SMTP server, e.g. `smtp.example.net`.                                             |
+| `SMTP_USER`                 | yes                         | —                            | Username for SMTP authentication.                                                                 |
+| `SMTP_PASSWORD`             | yes                         | —                            | Password or app-specific password.                                                                |
+| `SMTP_FROM`                 | yes                         | —                            | The only sender used, e.g. `Name <person@example.net>`. There is no `from` parameter.             |
+| `SMTP_PORT`                 | no                          | 587 / 465 / 25               | Depends on `SMTP_TLS`.                                                                            |
+| `SMTP_TLS`                  | no                          | `starttls`                   | `starttls`, `implicit` or `none`. Never opportunistic.                                            |
+| `SMTP_ALLOW_SEND`           | no                          | `false`                      | Set to `true` to register the sending tools.                                                      |
+| `SMTP_ALLOWED_RECIPIENTS`   | with `SMTP_ALLOW_SEND=true` | —                            | Comma-separated addresses and `@domains`. `*` allows anyone.                                      |
+| `SMTP_MAX_RECIPIENTS`       | no                          | `10`                         | Distinct recipients across To, Cc and Bcc in one message.                                         |
+| `SMTP_MAX_SENDS_PER_HOUR`   | no                          | `20`                         | Sliding hourly cap.                                                                               |
+| `SMTP_MAX_MESSAGE_BYTES`    | no                          | `10485760`                   | Size ceiling on the composed message.                                                             |
+| `SMTP_MAX_ATTACHMENT_BYTES` | no                          | `5242880`                    | Size ceiling on one attachment.                                                                   |
+| `SMTP_ATTACHMENT_DIR`       | no                          | —                            | Directory attachments are read from. Unset means no attachments.                                  |
+| `SMTP_ATTACHMENT_TYPES`     | no                          | document and image allowlist | Comma-separated content types that may be attached. `text/html` and `application/zip` are opt-in. |
+| `SMTP_SIGNATURE`            | no                          | —                            | Text appended below the standard `-- ` delimiter.                                                 |
+| `SMTP_AUDIT_LOG`            | no                          | —                            | File the audit lines are appended to, in addition to stderr.                                      |
+| `SMTP_ALLOW_TOOLS`          | no                          | —                            | Tool names, a prefix with one trailing `*`, or `essential`.                                       |
+| `SMTP_DENY_TOOLS`           | no                          | —                            | Removed after `SMTP_ALLOW_TOOLS` is applied.                                                      |
+| `SMTP_INSECURE_TLS`         | no                          | `false`                      | Accept self-signed certificates.                                                                  |
+| `ELICITATION`               | no                          | `true`                       | `false` replaces the approval dialog with the two-call token. **Not prefixed.**                   |
 
 Two defaults are worth reading twice, because they are the opposite of what the rest of this
 family does:
