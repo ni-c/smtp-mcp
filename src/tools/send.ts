@@ -360,8 +360,11 @@ const sendOutcome = z.object({
   accepted: z
     .array(z.string())
     .describe('Addresses the SMTP server took responsibility for.'),
+  // Strings, not `unknown`: nodemailer types the entry as an address object,
+  // but `sendMail` in `smtp.ts` maps every one of them through `String` before
+  // it gets here.
   rejected: z
-    .array(z.unknown())
+    .array(z.string())
     .describe('Addresses it refused. These people did not receive it.'),
   bytes: z.number().int().optional(),
   sends_remaining_this_hour: z.number().int(),
