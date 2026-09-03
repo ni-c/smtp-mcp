@@ -73,8 +73,11 @@ export class RateLimiter {
    * needs winning.
    *
    * Nothing is permanently consumed until {@link RateLimitSlot.commit}. A
-   * declined dialog or a refused message calls `release` instead, because a
-   * message the recipient never got must not count against the hour.
+   * message refused before anybody was asked — by the allowlist, by the
+   * attachment checks, by a token that did not match — calls `release`, because
+   * it never cost a person anything. A *declined* dialog commits: the quota is
+   * not only a cap on messages sent, it is the only bound on how many times a
+   * person can be asked, and a free decline is an unlimited supply of dialogs.
    */
   reserve(now: number = Date.now()): RateLimitSlot {
     if (this.remaining(now) === 0) {

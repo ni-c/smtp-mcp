@@ -419,26 +419,53 @@ describe('the rate limit', () => {
     await harness.close();
   });
 
-  it('does not consume quota for a declined dialog', async () => {
-    // Sending is what is limited, not asking. A declined message that burned
-    // quota would let a refusal deny service.
-    const smtp = new FakeSmtp();
+  it('consumes quota for a declined dialog', async () => {
+    // Nothing was sent, so on the narrow reading the slot should go back. It
+    // does not: the hourly cap is the only bound on how often a person can be
+    // asked, and a free decline is an unlimited supply of dialogs — the same
+    // message reworded until somebody clicks accept out of fatigue.
+    //
+    // Note both calls go through the *same* harness. The test this replaces
+    // used two, and each `connect()` builds its own limiter, so it never
+    // measured what it claimed to.
     const harness = await connect({
       config: { allowSend: true, maxSendsPerHour: 1 },
-      smtp,
       elicit: 'decline',
     });
-    await call(harness.client, 'send_mail', sendArgs());
-    await harness.close();
+    const declined = await call(harness.client, 'send_mail', sendArgs());
+    expect(declined.isError).toBe(true);
+    expect(textOf(declined)).toMatch(/counted against SMTP_MAX_SENDS_PER_HOUR/);
 
-    const second = await connect({
+    const second = await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ subject: 'Reworded, same ask' })
+    );
+    expect(second.isError).toBe(true);
+    expect(textOf(second)).toMatch(/rate limit of 1 message\(s\) per hour/);
+    // The second attempt never reached a dialog: one dialog, one slot.
+    expect(harness.prompts).toHaveLength(1);
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('gives the quota back when a token does not match', async () => {
+    // A rejected token is nobody's decision, and consuming here would let any
+    // caller burn the hour with tokens it invented.
+    const harness = await connect({
       config: { allowSend: true, maxSendsPerHour: 1 },
-      smtp,
-      elicit: 'accept',
     });
-    const result = await call(second.client, 'send_mail', sendArgs());
-    expect(jsonOf(result)).toMatchObject({ sent: true });
-    await second.close();
+    const rejected = await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ confirm_token: 'not-a-token-this-server-ever-issued' })
+    );
+    expect(rejected.isError).toBe(true);
+    const info = jsonOf(await call(harness.client, 'get_server_info')) as {
+      limits: { sends_remaining_this_hour: number };
+    };
+    expect(info.limits.sends_remaining_this_hour).toBe(1);
+    await harness.close();
   });
 
   it('reports what is left after a send', async () => {

@@ -352,23 +352,35 @@ async function withSlot(
     }
   );
   if (outcome.decision !== 'approved') {
-    // Asked and not answered yet, refused, or declined. Either way nothing left
-    // the building, so the slot goes back. The caller's catch would release it
-    // for the two that throw, but releasing here keeps all four in one place.
-    slot.release();
     if (outcome.decision === 'rejected') {
       // A token that did not match: issued for other arguments, or invented.
+      // Nobody decided anything, and consuming the slot here would hand any
+      // caller a way to burn the hour's quota with tokens it made up.
+      slot.release();
       auditAttempt(tool, ctx, args, 'token_rejected');
       throw new ToolInputError(`smtp-mcp: ${outcome.reason}`);
     }
     if (outcome.decision === 'declined') {
       // The one line in this log a person wrote themselves, in effect: they
       // were shown the message and said no.
+      //
+      // And it costs the slot. Nothing was sent, so on the narrow reading the
+      // quota should go back — but the quota is not only a cap on messages, it
+      // is the only bound on how many times a person can be asked. Handing the
+      // slot back makes a decline free, and a free decline is an unlimited
+      // supply of dialogs: the same message reworded until somebody clicks
+      // accept out of fatigue. The hourly cap is what makes that finite, and
+      // `docs/guide/approval.md` has always said so.
+      slot.commit();
       auditAttempt(tool, ctx, args, 'declined');
       throw new ToolInputError(
-        'smtp-mcp: the user declined. Nothing was sent.'
+        'smtp-mcp: the user declined. Nothing was sent, and the attempt counted ' +
+          'against SMTP_MAX_SENDS_PER_HOUR.'
       );
     }
+    // Asked and not answered yet. The question is still open and the second
+    // leg reserves again, so the slot goes back.
+    slot.release();
     return outcome.result;
   }
 

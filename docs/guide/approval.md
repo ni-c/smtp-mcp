@@ -30,7 +30,11 @@ The dialog is the last of four gates, not the only one. `SMTP_ALLOW_SEND` decide
 whether the sending tools are registered at all, `SMTP_ALLOWED_RECIPIENTS` bounds
 who can be written to, and a rate limiter reserves its slot **before** the dialog
 is raised — so a decline still costs the quota, and a model cannot mine the dialog
-for a free retry.
+for a free retry. That is the point of it: the hourly cap is the only bound on how
+many times a person can be asked, and an unlimited supply of dialogs is the same
+message reworded until somebody clicks accept out of tiredness. A token that does
+not match gives the slot back, because nobody decided anything and the alternative
+would let any caller burn the hour with tokens it made up.
 
 ## What the dialog contains
 
