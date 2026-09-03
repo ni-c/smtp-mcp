@@ -331,9 +331,44 @@ export async function loadAttachment(
   let content: Buffer;
   let handle;
   try {
-    handle = await open(target, flags);
-    content = await handle.readFile();
+    handle = await open(target, flags | fsConstants.O_NONBLOCK);
+    // The checks above ran on the path; these run on the file that was actually
+    // opened, and they are the ones that hold. Between `lstat` and `open`, a
+    // writer in the directory — who is in the threat model, which is why the
+    // attachment bytes are in the approval fingerprint — can swap the regular
+    // file for a FIFO, which a blocking open would wait on forever, or grow it
+    // past the ceiling, which an unbounded read would then allocate in full.
+    // `O_NONBLOCK` makes the FIFO open return instead of wait; the fstat sees
+    // what it is; and the read is capped at the size the fstat reported.
+    const opened = await handle.stat();
+    if (!opened.isFile()) {
+      throw new ToolInputError(
+        `smtp-mcp: "${sanitizeFilename(name)}" is not a regular file.`
+      );
+    }
+    if (opened.size > policy.maxBytes) {
+      throw new ToolInputError(
+        `smtp-mcp: "${sanitizeFilename(name)}" is ${opened.size} bytes, over ` +
+          `the limit of ${policy.maxBytes} (SMTP_MAX_ATTACHMENT_BYTES).`
+      );
+    }
+    content = Buffer.alloc(opened.size);
+    let offset = 0;
+    while (offset < opened.size) {
+      const { bytesRead } = await handle.read(
+        content,
+        offset,
+        opened.size - offset,
+        offset
+      );
+      if (bytesRead === 0) break;
+      offset += bytesRead;
+    }
+    // Shorter than the fstat said: the file shrank under us. Send what is
+    // there rather than a zero-padded tail.
+    if (offset < opened.size) content = content.subarray(0, offset);
   } catch (error) {
+    if (error instanceof ToolInputError) throw error;
     throw new ToolInputError(
       `smtp-mcp: could not read "${sanitizeFilename(name)}" from ` +
         `SMTP_ATTACHMENT_DIR: ${describe(error)}`
