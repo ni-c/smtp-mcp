@@ -455,9 +455,9 @@ describe('forging a line in the confirmation dialog', () => {
     const labelled = harness.prompts
       .join('\n')
       .split('\n')
-      .filter((line) => /^ {2}\w[\w ()_]*:/.test(line));
-    // From, To, Subject and Body — one line each, no more. The body carries
-    // line breaks of its own and still occupies exactly one of them.
+      .filter((line) => /^ {2}\w[\w ()_/]*:/.test(line));
+    // From, To 1/1, Subject and Body — one line each, no more. The body
+    // carries line breaks of its own and still occupies exactly one of them.
     expect(labelled).toHaveLength(4);
     expect(labelled.filter((line) => line.startsWith('  Body'))).toHaveLength(
       1

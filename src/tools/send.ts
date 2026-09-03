@@ -52,13 +52,41 @@ export function forwardSubject(original: string): string {
   return subject.slice(0, MAX_SUBJECT);
 }
 
-/** How many entries of a recipient list are shown before it is abbreviated. */
+/** How many entries of a list get a line of their own before the rest is summed up. */
 const MAX_SHOWN = 20;
 
-function listFor(addresses: readonly string[]): string {
-  return addresses.length > MAX_SHOWN
-    ? `${addresses.slice(0, MAX_SHOWN).join(', ')}, … and ${addresses.length - MAX_SHOWN} more`
-    : addresses.join(', ');
+/**
+ * One detail line per entry, numbered, with an explicit line for any remainder.
+ *
+ * Not one line per *field*, which is what this used to be. `mcp-approval` cuts
+ * every detail value at 200 characters, and a joined recipient list reaches that
+ * long before {@link MAX_SHOWN} entries do — six ordinary addresses are already
+ * over it. The cut is silent as far as this server is concerned, so the dialog
+ * showed the first few addresses and dropped the rest with nothing saying how
+ * many were missing. A Bcc nobody sees is the exfiltration channel this whole
+ * dialog exists to close, and it had been reopened by a formatting decision.
+ *
+ * Every entry is therefore its own value, so the cap applies per address rather
+ * than per list, and the label carries `i/N` so the total is visible on every
+ * line. An address is bounded by the schema well under 200 characters; the
+ * remainder line is what keeps the count honest if a configuration ever allows
+ * more recipients than fit.
+ */
+function linesFor(
+  label: string,
+  entries: readonly string[]
+): ConfirmationDetail[] {
+  const shown = entries.slice(0, MAX_SHOWN).map((entry, i) => ({
+    label: `${label} ${i + 1}/${entries.length}`,
+    value: entry,
+  }));
+  if (entries.length > MAX_SHOWN) {
+    shown.push({
+      label: `${label} — not shown`,
+      value: `${entries.length - MAX_SHOWN} further entries are not listed above`,
+    });
+  }
+  return shown;
 }
 
 /**
@@ -212,19 +240,18 @@ async function withSlot(
       label: 'From (fixed by SMTP_FROM)',
       value: ctx.config.smtp.from ?? '(unset)',
     },
-    { label: 'To', value: listFor(prepared.to) },
+    ...linesFor('To', prepared.to),
   ];
   if (prepared.cc.length > 0) {
-    details.push({ label: 'Cc', value: listFor(prepared.cc) });
+    details.push(...linesFor('Cc', prepared.cc));
   }
   if (prepared.bcc.length > 0) {
-    // Its own line, its own wording. A Bcc that a human does not see in the
+    // Its own label, its own wording. A Bcc that a human does not see in the
     // dialog is the ideal exfiltration channel: the message looks like the one
     // they approved, and the extra recipient appears nowhere in it.
-    details.push({
-      label: 'Bcc (hidden from the other recipients)',
-      value: listFor(prepared.bcc),
-    });
+    details.push(
+      ...linesFor('Bcc (hidden from the other recipients)', prepared.bcc)
+    );
   }
   details.push({ label: 'Subject', value: args.subject });
   // The message itself, which the dialog used not to show at all.
@@ -237,8 +264,10 @@ async function withSlot(
   // a body nobody had read.
   //
   // `mcp-approval` cuts every value to 200 characters and flattens it to one
-  // line, so this cannot push the recipients off the screen — and the character
-  // count in the label is what makes the part that is *not* shown visible.
+  // line. That is why the character count is in the label: the body is the one
+  // value here that is *expected* to be longer than the cap, and the count is
+  // what makes the part that is not shown visible. It is also why the
+  // recipients above get a line each — see {@link linesFor}.
   for (const [label, value] of [
     ['Body', args.body],
     ['Quoted original', args.quote],
@@ -264,12 +293,12 @@ async function withSlot(
     });
   }
   if (prepared.attachments.length > 0) {
-    details.push({
-      label: 'Attachments',
-      value: prepared.attachments
-        .map((a) => `${a.filename} (${a.bytes} bytes)`)
-        .join(', '),
-    });
+    details.push(
+      ...linesFor(
+        'Attachment',
+        prepared.attachments.map((a) => `${a.filename} (${a.bytes} bytes)`)
+      )
+    );
   }
   if (prepared.composed.htmlRemoved.length > 0) {
     // A detail rather than part of the consequence, and not for tidiness:

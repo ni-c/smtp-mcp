@@ -93,7 +93,14 @@ recipients, the hourly cap limits how many go out. None of them looks at what is
 model steered by an injected instruction into mailing local secrets to an address that is
 already on the allowlist passes all three, and a dialog that showed only a subject asked the
 person to approve a body nobody had read. Values are cut to 200 characters and flattened to one
-line, so the count in the label is what makes the unshown part visible.
+line, so the count in the label is what makes the unshown part of a body visible.
+
+**Every recipient gets a line of its own**, numbered `i/N`, and so does every attachment. The
+lists used to be one value each, and a value is cut at 200 characters — six ordinary addresses
+already exceed that, so the dialog dropped the rest of the list without saying so. The line that
+is not shown is the one that matters: an address appended to Bcc is invisible in the message the
+recipients receive, and it was invisible in the dialog too. Where a list is long enough that even
+the numbered lines are abbreviated, the remainder is stated as its own line rather than left out.
 
 A subject may not contain an RFC 2047 encoded-word — `=?utf-8?B?…?=`. It is pure ASCII on the
 way out and something else entirely on the way in, so the human would be reading a different

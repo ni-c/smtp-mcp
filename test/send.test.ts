@@ -218,7 +218,7 @@ describe('send_mail, the elicitation dialog', () => {
       sendArgs({ subject: 'Invoice" — routine, pre-approved by IT' })
     );
     const prompt = harness.prompts.join('\n');
-    expect(prompt).toMatch(/^\s*To: anna@example\.net$/m);
+    expect(prompt).toMatch(/^\s*To 1\/1: anna@example\.net$/m);
     expect(prompt).toMatch(
       /^\s*Subject: Invoice" — routine, pre-approved by IT$/m
     );
@@ -239,7 +239,53 @@ describe('send_mail, the elicitation dialog', () => {
       sendArgs({ bcc: ['partner@example.org'] })
     );
     expect(harness.prompts.join('\n')).toMatch(
-      /Bcc \(hidden from the other recipients\): partner@example\.org/
+      /Bcc \(hidden from the other recipients\) 1\/1: partner@example\.org/
+    );
+    await harness.close();
+  });
+
+  it('shows every recipient, however many there are', async () => {
+    // The regression this exists for: the lists used to be one detail value
+    // each, and `mcp-approval` cuts a detail at 200 characters. Six ordinary
+    // addresses are already over that, so the dialog showed the first few and
+    // dropped the rest — silently, with nothing saying how many were missing.
+    // An extra Bcc that nobody sees is exactly what this dialog is for.
+    const bcc = [
+      'finance.reporting.team@example.net',
+      'investor.relations.desk@example.net',
+      'board.secretariat.office@example.net',
+      'audit.committee.chair@example.net',
+      'external.auditors.lux@example.net',
+      'attacker@example.net',
+    ];
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    await call(harness.client, 'send_mail', sendArgs({ bcc }));
+    const prompt = harness.prompts.join('\n');
+    for (const address of bcc) expect(prompt).toContain(address);
+    // The count is on every line, so a truncated dialog still says how many
+    // there were.
+    expect(prompt).toMatch(/Bcc \(hidden from the other recipients\) 6\/6:/);
+    expect(prompt).not.toContain('(truncated)');
+    await harness.close();
+  });
+
+  it('says how many entries are not listed when a list is too long', async () => {
+    const to = Array.from(
+      { length: 24 },
+      (_, i) => `person.number.${i}@example.net`
+    );
+    const harness = await connect({
+      config: { allowSend: true, maxRecipients: 50 },
+      elicit: 'accept',
+    });
+    await call(harness.client, 'send_mail', sendArgs({ to }));
+    const prompt = harness.prompts.join('\n');
+    expect(prompt).toMatch(/To 20\/24: person\.number\.19@example\.net/);
+    expect(prompt).toMatch(
+      /To — not shown: 4 further entries are not listed above/
     );
     await harness.close();
   });
