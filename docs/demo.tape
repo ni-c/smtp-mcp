@@ -4,7 +4,7 @@
 #   - vhs (https://github.com/charmbracelet/vhs) and its ttyd/ffmpeg dependencies
 #   - npm run build, so dist/ is current
 #   - the sandbox running, because the server connects on startup:
-#       docker compose -f scripts/sandbox/docker-compose.yml up -d
+#       docker compose -f test/integration/compose.yml up -d --wait
 #
 # Run it from the REPOSITORY ROOT, not from docs/:
 #   vhs docs/demo.tape

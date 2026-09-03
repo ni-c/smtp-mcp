@@ -53,6 +53,16 @@ SMTP_ALLOW_SEND = "true"
 SMTP_ALLOWED_RECIPIENTS = "@example.net"
 ```
 
+## MCP Inspector
+
+Useful for reading the tool schemas and calling tools by hand:
+
+```sh
+SMTP_HOST=smtp.example.net SMTP_USER=person@example.net SMTP_PASSWORD=… \
+  SMTP_FROM='Your Name <person@example.net>' \
+  npx @modelcontextprotocol/inspector npx -y @ni-c/smtp-mcp
+```
+
 ## Docker
 
 ```json
@@ -148,30 +158,15 @@ server understands, not a tool name the hub knows — so the preset belongs in t
 "env": { "SMTP_ALLOW_TOOLS": "essential" }
 ```
 
+The two compose, and it is worth knowing which does what: the server registers what its
+environment variables allow, and the hub exposes what its arrays allow. Filtering in the server
+is the tighter of the two — the tool is never built.
+
+Register `https://your-host/smtp-mcp/mcp` as a connector and you get this server alone. Register
+the hub's `/hub` endpoint instead and you reach _every_ server behind it through six meta-tools,
+which is the answer worth having once you run several of these at once.
+
 **A warning specific to this server.** Reaching smtp-mcp through the hub usually means reaching
 it from a client that cannot show an elicitation dialog, which drops every send back to the
 two-call token — and the token is not a human-in-the-loop gate. If you run it that way, the
 allowlist is doing most of the work, so keep it narrow.
-
-## Pinning a version
-
-```sh
-npx -y @ni-c/smtp-mcp@0.1.0
-```
-
-## From source
-
-```sh
-git clone https://github.com/ni-c/smtp-mcp.git
-cd smtp-mcp && npm install && npm run build
-node dist/index.js
-```
-
-## Verifying what you install
-
-Releases are published with npm provenance, so the tarball can be traced to the workflow run that
-built it:
-
-```sh
-npm audit signatures
-```

@@ -28,13 +28,10 @@ instead, and a model picks the right tool far more reliably from five than from 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://smtp-mcp.ni-c.de/architecture-dark.svg">
   <source media="(prefers-color-scheme: light)" srcset="https://smtp-mcp.ni-c.de/architecture-light.svg">
-  <img alt="Architecture of smtp-mcp" src="https://smtp-mcp.ni-c.de/architecture.svg">
+  <img src="https://smtp-mcp.ni-c.de/architecture.svg" alt="An MCP client talking to smtp-mcp over stdio, which checks every recipient against an allowlist and asks a person to approve the message before handing it to a submission server over TLS" width="800">
 </picture>
 
-<img alt="A terminal session: listing the seven tools, then calling send_mail — which does not send but returns a confirmation naming the recipient and subject on their own lines — and then a second call to an address outside the allowlist, which is refused outright" src="https://smtp-mcp.ni-c.de/demo.gif">
-
-Three calls against a throwaway SMTP server. The last two are the point: the first send stops and
-asks, and the second never gets that far because the address is not on the allowlist.
+<img src="https://smtp-mcp.ni-c.de/demo.gif" alt="Listing the seven tools, then calling send_mail — which sends nothing and comes back asking, with the recipient and subject on their own labelled lines — and then a second call to an address outside the allowlist, which is refused before any connection is opened" width="800">
 
 ## What makes it different
 
@@ -184,9 +181,6 @@ docker run --rm -i \
   ghcr.io/ni-c/smtp-mcp
 ```
 
-If you run several of these servers at once, [mcp-hub](https://mcp-hub.ni-c.de) is the other
-answer — its `/hub` endpoint replaces every server's tools with six meta-tools.
-
 ### Through mcp-hub
 
 A client that cannot spawn a local process — ChatGPT connectors, Claude on the web,
@@ -210,8 +204,10 @@ have:
         "SMTP_HOST": "smtp.example.net",
         "SMTP_USER": "person@example.net",
         "SMTP_PASSWORD": "…",
-        "SMTP_FROM": "Your Name <person@example.net>"
-      }
+        "SMTP_FROM": "Your Name <person@example.net>",
+        "SMTP_ALLOW_TOOLS": "essential"
+      },
+      "denyTools": ["send_mail", "reply_mail"]
     }
   }
 }
