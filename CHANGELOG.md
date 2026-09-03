@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The advertised schemas avoid a spelling that is legal JSON Schema and still
+  gets a tool refused, or its constraint silently dropped, by some MCP clients:
+  a nullable field is written as `anyOf` branches rather than `"type":
+["string", "null"]`, which several clients read as a single type and then
+  drop. What the tools accept and return is unchanged; only the way the schema
+  says so is.
+
 - A result too large to shrink is now an error rather than an envelope carrying
   the oversized document as a string. The envelope was valid JSON and is no
   longer a valid _answer_: the SDK validates each result against the schema the

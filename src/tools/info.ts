@@ -93,15 +93,15 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         configured: z.boolean(),
         missing_environment_variables: z.array(z.string()),
         smtp: z.object({
-          host: z.string().nullable(),
+          host: z.string().describe('Null when SMTP_HOST is unset.').nullable(),
           port: z.number().int(),
           tls: z.string(),
           insecure_tls: z.boolean(),
         }),
         from: z
           .string()
-          .nullable()
-          .describe('The one address this can send as.'),
+          .describe('The one address this can send as.')
+          .nullable(),
         from_is_fixed: z.literal(true),
         allowed_recipients: z.string(),
         limits: z.object({
@@ -260,7 +260,10 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
       // written by whoever sent it, and anyone in the world can send mail.
       outputSchema: z.object({
         ...untrustedFields,
-        from: z.string().nullable(),
+        from: z
+          .string()
+          .describe('The envelope sender, null when it was not recorded.')
+          .nullable(),
         recipient_count: z.number().int(),
         bcc_count: z
           .number()
@@ -342,7 +345,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
       annotations: READ_ONLY,
       outputSchema: z.object({
         reachable: z.literal(true),
-        host: z.string().nullable(),
+        host: z.string().describe('Null when SMTP_HOST is unset.').nullable(),
         port: z.number().int(),
         tls: z.string(),
         authenticated: z.literal(true),
