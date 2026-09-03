@@ -1,7 +1,8 @@
 import { appendFileSync } from 'node:fs';
 
 /**
- * Records every message this server hands to the SMTP server.
+ * Records every message this server hands to the SMTP server — and every one it
+ * was asked to hand over and did not.
  *
  * The line goes to stderr, which is the one channel the model never reads: the
  * MCP transport owns stdout, and tool results go back to the model. So this is
@@ -14,6 +15,12 @@ import { appendFileSync } from 'node:fs';
  * on a desktop MCP client that is a window nobody keeps. The question this
  * server has to be able to answer months later is "what went out, to whom, and
  * when" — so recipients, subject and the Message-ID are recorded.
+ *
+ * Refusals are recorded too, marked `outcome=refused`, `declined` or
+ * `token_rejected`. A log of what went out cannot answer the question that
+ * matters most after an incident — *was this session being steered?* — because
+ * a steered session's attempts are mostly refused by the allowlist. The
+ * refusals are the evidence.
  *
  * The **body is never recorded**, and the subject is. That split is deliberate:
  * a subject is what identifies the message in the recipient's mailbox, so

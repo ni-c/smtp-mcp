@@ -82,11 +82,27 @@ export interface Config {
   denyTools: string | undefined;
 }
 
+/**
+ * What may be attached unless the operator says otherwise.
+ *
+ * Two types that used to be here are not, and both for the reason the
+ * executable-extension list gives — this server must not become the thing that
+ * mails a payload out under the operator's name and DKIM signature:
+ *
+ * - `text/html`: an HTML file as an attachment is the phishing shape called
+ *   HTML smuggling. It opens in a browser, not a mail client, with none of the
+ *   mail client's restrictions, and nothing in this server sanitises it — the
+ *   HTML *part* of a message goes through `sanitize.ts`; a file does not.
+ * - `application/zip`: an archive passes the magic-byte check on its own
+ *   bytes (`PK`) and can carry an `.exe` the check never sees.
+ *
+ * Both remain available through `SMTP_ATTACHMENT_TYPES` to an operator who
+ * writes them down.
+ */
 export const DEFAULT_ATTACHMENT_TYPES = [
   'application/pdf',
   'application/json',
   'application/xml',
-  'application/zip',
   'application/rtf',
   'application/vnd.oasis.opendocument.text',
   'application/vnd.oasis.opendocument.spreadsheet',
@@ -99,7 +115,6 @@ export const DEFAULT_ATTACHMENT_TYPES = [
   'image/webp',
   'text/plain',
   'text/csv',
-  'text/html',
   'text/calendar',
 ];
 

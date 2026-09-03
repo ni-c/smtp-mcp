@@ -23,7 +23,7 @@ with setup instructions instead of reaching a server.
 | `SMTP_MAX_MESSAGE_BYTES` | no | `number` | Maximum size of the composed message. Default 10485760. |
 | `SMTP_MAX_ATTACHMENT_BYTES` | no | `number` | Maximum size of a single attachment. Default 5242880. |
 | `SMTP_ATTACHMENT_DIR` | no | `string` | Directory attachments are read from. Unset means attachments are unavailable. |
-| `SMTP_ATTACHMENT_TYPES` | no | `string` | Comma-separated content types that may be attached. Defaults to a document and image allowlist. |
+| `SMTP_ATTACHMENT_TYPES` | no | `string` | Comma-separated content types that may be attached. Defaults to a document and image allowlist; `text/html` and `application/zip` are opt-in. |
 | `SMTP_SIGNATURE` | no | `string` | Text appended below the standard signature delimiter of every message. |
 | `SMTP_AUDIT_LOG` | no | `string` | File the audit lines are appended to, in addition to stderr. |
 | `SMTP_ALLOW_TOOLS` | no | `string` | Comma-separated tool names, a prefix with one trailing *, or "essential" for the curated preset. |

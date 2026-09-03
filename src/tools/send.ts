@@ -62,6 +62,40 @@ function listFor(addresses: readonly string[]): string {
 }
 
 /**
+ * Records a send that did not happen, and why.
+ *
+ * Same fields as the line for a send that did, minus what only a composed
+ * message has, plus the outcome. `error` is this server's own refusal text,
+ * which names the caller's addresses and file names — data the schema has
+ * already checked — and never the body.
+ */
+function auditAttempt(
+  tool: string,
+  ctx: ToolContext,
+  args: MailArgs,
+  outcome: 'refused' | 'declined' | 'token_rejected',
+  error?: string
+): void {
+  audit(
+    tool,
+    {
+      from: ctx.config.smtp.fromAddress,
+      to: args.to,
+      cc: args.cc !== undefined && args.cc.length > 0 ? args.cc : undefined,
+      bcc: args.bcc !== undefined && args.bcc.length > 0 ? args.bcc : undefined,
+      subject: args.subject,
+      attachments:
+        args.attachments !== undefined && args.attachments.length > 0
+          ? args.attachments
+          : undefined,
+      outcome,
+      error,
+    },
+    ctx.config.auditLog
+  );
+}
+
+/**
  * The one path by which a message leaves this server.
  *
  * All three sending tools funnel through here, so there is exactly one place
@@ -77,9 +111,11 @@ function listFor(addresses: readonly string[]): string {
  *   free, and MCP clients issue tool calls in parallel. A declined dialog or a
  *   refused message releases the slot, because sending is what is limited, not
  *   asking.
- * - The **audit line is written after the send**, because it records what
- *   happened rather than what was intended, and a message the server refused
- *   must not appear in the log as one that went out.
+ * - The **audit line for a send is written after the send**, because it
+ *   records what happened rather than what was intended, and a message the
+ *   server refused must not appear in the log as one that went out. A refusal,
+ *   a declined dialog and a rejected token get lines of their own, marked as
+ *   such: they are what a hijacked session leaves behind.
  */
 async function performSend(
   server: McpServer,
@@ -91,7 +127,20 @@ async function performSend(
   args: MailArgs,
   confirmToken: string | undefined
 ): Promise<CallToolResult | InputRequiredResult> {
-  const prepared = await prepareMessage(args, ctx.config, ctx.version);
+  let prepared: PreparedMessage;
+  try {
+    prepared = await prepareMessage(args, ctx.config, ctx.version);
+  } catch (error) {
+    // A refused send is written down as well as a completed one. The audit
+    // log describes itself as the place a person reconstructs what a hijacked
+    // session did, and the refusals — an address off the allowlist, an
+    // attachment that does not exist — are the evidence that a session was
+    // hijacked at all. The body is not recorded here either.
+    if (error instanceof ToolInputError) {
+      auditAttempt(tool, ctx, args, 'refused', error.message);
+    }
+    throw error;
+  }
   const resourceKey = setResourceKey(tool, messageFingerprint(args, prepared));
 
   // At-most-once, before anything else costs anything.
@@ -279,9 +328,14 @@ async function withSlot(
     // for the two that throw, but releasing here keeps all four in one place.
     slot.release();
     if (outcome.decision === 'rejected') {
+      // A token that did not match: issued for other arguments, or invented.
+      auditAttempt(tool, ctx, args, 'token_rejected');
       throw new ToolInputError(`smtp-mcp: ${outcome.reason}`);
     }
     if (outcome.decision === 'declined') {
+      // The one line in this log a person wrote themselves, in effect: they
+      // were shown the message and said no.
+      auditAttempt(tool, ctx, args, 'declined');
       throw new ToolInputError(
         'smtp-mcp: the user declined. Nothing was sent.'
       );

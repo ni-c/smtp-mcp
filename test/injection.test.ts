@@ -57,6 +57,50 @@ describe('header injection', () => {
   });
 });
 
+describe('the three headers nodemailer writes byte for byte', () => {
+  // Message-ID, In-Reply-To and References are copied to the wire unencoded,
+  // so anything outside printable ASCII is an 8-bit header and U+2028 quietly
+  // splits one identifier into two.
+  it('refuses a non-ASCII or separator-bearing Message-ID', async () => {
+    const harness = await connect({ config: { allowSend: true } });
+    for (const id of [
+      '<\u00e4\u00f6\u00fc@example.net>',
+      '<abc\u2028def@example.net>',
+      '<abc\u0085def@example.net>',
+      '<abc def@example.net>',
+    ]) {
+      const result = await call(harness.client, 'reply_mail', {
+        to: ['anna@example.net'],
+        original_subject: 'Hi',
+        body: 'x',
+        in_reply_to: id,
+      });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toMatch(/printable ASCII/);
+    }
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('still accepts the Message-IDs found in the wild', async () => {
+    const harness = await connect({ config: { allowSend: true } });
+    for (const id of [
+      '<CAF+abc_def=ghi.jkl@mail.example.com>',
+      'abc123@example.net',
+      '<01020188a1b2c3d4-0000-0000-0000-000000000000-000000@eu-west-1.amazonses.com>',
+    ]) {
+      const result = await call(harness.client, 'preview_mail', {
+        to: ['anna@example.net'],
+        subject: 'Hi',
+        body: 'x',
+        in_reply_to: id,
+      });
+      expect(result.isError).not.toBe(true);
+    }
+    await harness.close();
+  });
+});
+
 describe('getting past the recipient allowlist', () => {
   const attempts = [
     ['a subdomain of an allowed domain', 'anna@mail.example.net'],

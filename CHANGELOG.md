@@ -25,6 +25,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it. No other tool carries the marker, because no other tool reports anything
   this server did not write itself.
 
+### Security
+
+- **The HTML sanitiser modelled a space, not the tokenizer.** Every attribute
+  pattern looked for whitespace in front of the attribute name and read the
+  value literally, and an HTML tokenizer does neither. Eleven shapes went out
+  untouched with an empty removal list — `<img/src=…>`, `<img alt="x"src=…>`,
+  `src="&#104;ttps://…"`, `https&colon;//…`, `\\host/…`, `u\72l(…)` in a style,
+  and `<link>`, `<base>` and `<meta>` behind an unquoted `<`, which the final
+  refusal check did not name. Attribute patterns now start after whitespace,
+  `/` or a quote; scheme and remote checks run on the decoded value with
+  backslashes read as slashes; inline styles are decoded as CSS and dropped
+  when anything in them fetches; and the refusal check is built from the same
+  element list as the removal passes. Found by an internal audit.
+
+- **An attachment was checked on its path and read from whatever was there a
+  moment later.** A writer in `SMTP_ATTACHMENT_DIR` could swap in a FIFO — the
+  blocking open then waited forever — or grow the file past the ceiling, which
+  `readFile` then allocated in full. The open is non-blocking, type and size
+  are checked again on the opened handle, and the read is capped at the size
+  the handle reported.
+
+- **A message that could not fit was composed anyway, then refused.** Ten
+  attachments at the default ceiling are 67 MB once base64 has run over them,
+  all of it built and then refused by the exact check — through `preview_mail`,
+  which has no gate, no confirmation and no rate limit. A lower bound is taken
+  before composing and what cannot fit is refused without being built.
+
+- **The confirmation dialog's consequence carried caller-derived text without a
+  cap.** The list of HTML removals names the scheme of a stripped URL, and a
+  scheme is whatever the caller wrote before the colon — up to the whole HTML
+  ceiling. `mcp-approval` flattens and caps every _detail_ and leaves the
+  consequence alone, so the list moved to a detail line and the scheme is cut
+  at 24 characters.
+
+- `text/html` and `application/zip` are no longer in the default attachment
+  types. An HTML file opens in a browser with none of a mail client's
+  restrictions and none of the sanitising the HTML _part_ of a message gets;
+  an archive passes the magic-byte check on its own bytes and can carry the
+  executable the check never sees. Both remain available through
+  `SMTP_ATTACHMENT_TYPES`.
+
+- A Message-ID, `in_reply_to` or `references` entry is printable ASCII without
+  whitespace or angle brackets. nodemailer writes these three headers byte for
+  byte, so a non-ASCII character was an 8-bit header on the wire and U+2028
+  quietly split one identifier into two.
+
+### Added
+
+- **Refused sends are in the audit log.** A refusal by the allowlist or the
+  attachment checks, a declined dialog and a rejected token each write a line
+  marked `outcome=refused`, `declined` or `token_rejected`, with the recipients
+  and subject that were asked for and never the body. A log of what went out
+  cannot show that a session was being steered; the refusals can.
+
+- The confirmation dialog shows the HTML part **as the recipient reads it**,
+  derived from the sanitised markup, beside the raw markup. The first 200
+  characters of markup are mostly tags, and on a message with an empty body the
+  HTML is the message. It also says when the plain-text body and the HTML part
+  say different things — most recipients see only the latter — and
+  `preview_mail` reports the same as `text_html_diverge`.
+
+- The injection detector's findings are kept per field, and the dialog says
+  whose words matched: a quote that gives orders is a forwarded message trying
+  to, a body that gives orders is the model writing them. `preview_mail` reports
+  the fields as `suspicious_in`.
+
 ### Fixed
 
 - **The three send tools reported `accepted` as two different types.** A first

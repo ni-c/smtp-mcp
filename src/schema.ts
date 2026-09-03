@@ -147,17 +147,24 @@ export const htmlParam = z
  * A Message-ID, with or without the angle brackets.
  *
  * Not validated against RFC 5322 in full — real ones in the wild are stranger
- * than the grammar allows. What is enforced is what matters here: no
- * whitespace, no line break, no nested angle brackets, bounded length. Those
+ * than the grammar allows. What is enforced is what matters here: printable
+ * ASCII only, no whitespace, no nested angle brackets, bounded length. Those
  * are the properties that keep it inside the header it is written into.
+ *
+ * Printable ASCII rather than merely "no line breaks": nodemailer encodes
+ * every header it writes except `Message-ID`, `In-Reply-To` and `References`,
+ * which go out byte for byte. A non-ASCII character here is an 8-bit header
+ * on the wire, and U+2028 — not a line break to `\s`-minus-Unicode, but a
+ * separator to nodemailer's `References` splitter — quietly turned one
+ * identifier into two. A real Message-ID never needs anything outside ASCII.
  */
 export const messageIdParam = z
   .string()
   .min(3)
   .max(256)
   .refine(
-    (v) => !/[\s<>\0]/.test(v.replace(/^<|>$/g, '')),
-    'must be a single Message-ID'
+    (v) => /^[!-;=?-~]+$/.test(v.replace(/^<|>$/g, '')),
+    'must be a single Message-ID in printable ASCII without whitespace or angle brackets'
   )
   .refine((v) => v.includes('@'), 'must contain @, like <abc123@example.net>')
   .describe(
