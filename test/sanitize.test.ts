@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { ToolInputError } from '../src/errors.js';
-import { htmlToText, sanitizeHtml } from '../src/sanitize.js';
+import {
+  decodeCssEscapes,
+  decodeReferences,
+  htmlToText,
+  sanitizeHtml,
+} from '../src/sanitize.js';
 
 describe('sanitizeHtml', () => {
   it('leaves ordinary markup alone', () => {
@@ -291,6 +296,171 @@ describe('remote subresources beyond src', () => {
   });
 });
 
+describe('what the tokenizer accepts, the sanitiser has to see', () => {
+  // Every pattern below the tag level used to look for a space in front of an
+  // attribute name and read the value literally. An HTML tokenizer does
+  // neither: an attribute may follow a `/` or a closing quote directly, and a
+  // value is decoded before it is read as a URL. Eleven of the thirteen shapes
+  // here went out untouched with `removed: []` — the dialog said nothing had
+  // been taken out, and SECURITY.md promised the opposite.
+
+  const beacons: Array<[string, string]> = [
+    [
+      'a slash as the attribute boundary',
+      '<img/src="https://tracker.example/p.gif">',
+    ],
+    [
+      'a closing quote as the attribute boundary',
+      '<img alt="x"src="https://tracker.example/p.gif">',
+    ],
+    [
+      'a decimal reference in the scheme',
+      '<img src="&#104;ttps://tracker.example/p.gif">',
+    ],
+    [
+      'a hex reference in the scheme',
+      '<img src="&#x68;ttps://tracker.example/p.gif">',
+    ],
+    [
+      'a numeric reference without its semicolon',
+      '<img src="&#104ttps://tracker.example/p.gif">',
+    ],
+    [
+      'a named reference for the colon',
+      '<img src="https&colon;//tracker.example/p.gif">',
+    ],
+    [
+      'backslashes as the network-path start',
+      '<img src="\\\\tracker.example/p.gif">',
+    ],
+    ['a mixed network-path start', '<img src="/\\tracker.example/p.gif">'],
+    [
+      'leading whitespace before the slashes',
+      '<img src="  //tracker.example/p.gif">',
+    ],
+    [
+      'a CSS escape inside url(',
+      '<div style="background:u\\72l(https://tracker.example/p.gif)">x</div>',
+    ],
+    [
+      'image-set() in place of url()',
+      '<div style="background:image-set(https://tracker.example/p.gif 1x)">x</div>',
+    ],
+    [
+      'a background attribute after a slash',
+      '<table/background="https://tracker.example/p.gif"><td>x</td></table>',
+    ],
+  ];
+
+  for (const [name, input] of beacons) {
+    it(`removes a remote fetch hidden behind ${name}`, () => {
+      const result = sanitizeHtml(input);
+      expect(result.html).not.toContain('tracker.example');
+      expect(result.html).not.toMatch(/72l|image-set/);
+      expect(result.removed.length).toBeGreaterThan(0);
+    });
+  }
+
+  it('removes an event handler that follows a slash', () => {
+    const result = sanitizeHtml('<img/onerror="steal()" alt="x">');
+    expect(result.html).not.toMatch(/onerror|steal/);
+    expect(result.html).toContain('alt="x"');
+    expect(result.removed).toContain('error handler');
+  });
+
+  it('strips a javascript: URL that follows a slash or hides in references', () => {
+    for (const input of [
+      '<a/href="javascript:steal()">x</a>',
+      '<a href="&#106;avascript:steal()">x</a>',
+      '<a href="java&Tab;script:steal()">x</a>',
+      '<a href="&#x6A avascript:steal()">x</a>',
+    ]) {
+      const result = sanitizeHtml(input);
+      expect(result.html).not.toMatch(/javascript|steal|&#/);
+      expect(result.removed).toContain('javascript: URL in href');
+    }
+  });
+
+  it('refuses the void elements the tag pattern cannot parse', () => {
+    // `a=b<c` ends the unquoted attribute run at the `<`, so the tag pattern
+    // never reaches the `>`. These were not on the refusal list; a `<link>`
+    // that survives is a remote stylesheet fetch, a `<base>` redirects every
+    // relative URL in the message, a `<meta refresh>` is a redirect.
+    for (const input of [
+      '<link a=b<c rel="stylesheet" href="https://tracker.example/p.css">',
+      '<base a=b<c href="https://tracker.example/"><img src="p.gif">',
+      '<meta a=b<c http-equiv="refresh" content="0;url=https://tracker.example/">',
+      '<noscript a=b<c><img src="https://tracker.example/p.gif"></noscript>',
+    ]) {
+      expect(() => sanitizeHtml(input)).toThrow(/still contains a </);
+    }
+  });
+
+  it('does not eat the quote that belongs to the previous attribute', () => {
+    const result = sanitizeHtml(
+      '<img alt="x"src="https://tracker.example/p.gif" title="t">'
+    );
+    // Removed whole by the tag pass; the attribute-level fallback is checked
+    // on an element that stays.
+    expect(result.html).toBe('');
+    const kept = sanitizeHtml('<div title="t"onclick="a()">x</div>');
+    expect(kept.html).toBe('<div title="t">x</div>');
+  });
+
+  it('caps a caller-chosen scheme in the removal list', () => {
+    // The list is read out in the confirmation dialog, where mcp-approval
+    // flattens the details but not the consequence. A scheme is legal at any
+    // length, so an uncapped one is 60 kB of caller text above the recipients.
+    const result = sanitizeHtml(`<a href="${'a'.repeat(5000)}:x">x</a>`);
+    expect(result.removed).toHaveLength(1);
+    expect(result.removed[0]?.length).toBeLessThan(60);
+    expect(result.removed[0]).toMatch(/^a{24}… URL in href$/);
+  });
+
+  it('leaves what the tokenizer would also leave alone', () => {
+    const input =
+      '<p>Hello <b>Anna</b></p><a href="https://example.net/x?a=1&amp;b=2">click</a>' +
+      '<img src="cid:logo" alt="a/b &amp; c"><div style="color:red">x</div>';
+    const result = sanitizeHtml(input);
+    expect(result.html).toBe(input);
+    expect(result.removed).toEqual([]);
+  });
+});
+
+describe('decodeReferences', () => {
+  it('decodes numeric references with and without the semicolon', () => {
+    expect(decodeReferences('&#104;&#x74;&#116ps')).toBe('https');
+  });
+
+  it('decodes the named references that can spell a URL', () => {
+    expect(decodeReferences('https&colon;&sol;&sol;x')).toBe('https://x');
+    // A legacy name decodes without its semicolon — unless an alphanumeric
+    // follows, which is the attribute-value rule the tokenizer applies.
+    expect(decodeReferences('a&amp;b &amp c &ampc')).toBe('a&b & c &ampc');
+  });
+
+  it('leaves unknown names and bare ampersands alone', () => {
+    expect(decodeReferences('&bogus; a & b &colon')).toBe(
+      '&bogus; a & b &colon'
+    );
+  });
+});
+
+describe('decodeCssEscapes', () => {
+  it('decodes hex escapes with their optional trailing space', () => {
+    expect(decodeCssEscapes('u\\72l(x)')).toBe('url(x)');
+    expect(decodeCssEscapes('u\\000072 l(x)')).toBe('url(x)');
+  });
+
+  it('decodes a backslash before a non-hex character to that character', () => {
+    expect(decodeCssEscapes('\\u\\rl(x)')).toBe('url(x)');
+  });
+
+  it('decodes HTML references first, as a client does', () => {
+    expect(decodeCssEscapes('u&#92;72l(x)')).toBe('url(x)');
+  });
+});
+
 describe('htmlToText', () => {
   it('turns block structure into line breaks', () => {
     expect(htmlToText('<p>one</p><p>two</p>')).toBe('one\ntwo');
@@ -335,6 +505,12 @@ describe('malformed markup cannot stall the event loop', () => {
     ['closed attribute quotes', '<img a="b" '.repeat(5818)],
     ['a quote that never closes', `<img a="${'x'.repeat(63000)}`],
     ['alternating quote styles', `<img a="b" c='d' `.repeat(3764)],
+    // The shapes the attribute-boundary and decoding work added.
+    ['slash-separated attributes', '<img/src="x"/'.repeat(4900)],
+    ['unterminated style attributes', '<div style="'.repeat(5300)],
+    ['a style full of escapes', `<div style="${'\\7'.repeat(31000)}">`],
+    ['a value full of references', `<a href="${'&#1'.repeat(21000)}">`],
+    ['a value full of named references', `<a href="${'&colon'.repeat(9000)}">`],
   ];
 
   for (const [name, input] of pathological) {
