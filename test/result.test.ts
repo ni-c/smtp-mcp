@@ -163,6 +163,28 @@ describe('sanitizeErrorBody', () => {
     );
   });
 
+  it('drops an HTML page that nodemailer prefixed with its own text', () => {
+    // The string does not start where the page does: nodemailer appends the
+    // response to its own message before throwing, so a captive portal on the
+    // submission port arrives as `Invalid login: <html>…`. An anchored test
+    // misses it and two thousand characters of somebody else's prose reach the
+    // model.
+    expect(
+      sanitizeErrorBody(
+        'Invalid login: <html><body>Sign in to WiFi</body></html>'
+      )
+    ).toBe('(HTML error page omitted)');
+    expect(sanitizeErrorBody('535 5.7.8 <!DOCTYPE html><html>x</html>')).toBe(
+      '(HTML error page omitted)'
+    );
+  });
+
+  it('still reports a message that merely mentions markup later on', () => {
+    // The window is short on purpose: this is a real error worth reading.
+    const body = `${'the server said no. '.repeat(20)}see <html> in the docs`;
+    expect(sanitizeErrorBody(body)).toContain('the server said no');
+  });
+
   it('truncates anything else', () => {
     const body = sanitizeErrorBody('x'.repeat(5000));
     expect(body.length).toBeLessThan(2100);

@@ -259,6 +259,36 @@ describe('preview_mail', () => {
     await harness.close();
   });
 
+  it('ignores caller fields the schema does not declare', async () => {
+    // The zod strip invariant, which nothing pinned before. `MailArgs` keeps
+    // `date` and `message_id` as test seams and neither is in the approval
+    // fingerprint, so one `looseObject` on an input schema would hand a caller
+    // the sent `Date` and `Message-ID` with the fingerprint blind to both. The
+    // same goes for `from`, which this server refuses to let anyone choose.
+    const harness = await connect();
+    const text = textOf(
+      await call(
+        harness.client,
+        'preview_mail',
+        sendArgs({
+          from: 'Someone Else <ceo@example.net>',
+          message_id: '<forged@evil.example>',
+          date: 'Thu, 1 Jan 1970 00:00:00 +0000',
+          headers: { 'X-Injected': 'yes' },
+          envelope: { to: ['attacker@evil.example'] },
+          raw: 'From: attacker@evil.example',
+        })
+      )
+    );
+    expect(text).toContain('From: Me <me@example.net>');
+    expect(text).not.toContain('ceo@example.net');
+    expect(text).not.toContain('forged@evil.example');
+    expect(text).not.toContain('X-Injected');
+    expect(text).not.toContain('attacker@evil.example');
+    expect(text).not.toContain('1 Jan 1970');
+    await harness.close();
+  });
+
   it('keeps a huge preview inside the result budget', async () => {
     // `preview_mail` is the one tool that returns a whole message, and it went
     // through no budget at all: a 64 kB HTML part with a distinct unsafe scheme
@@ -340,7 +370,10 @@ describe('test_connection', () => {
     };
     expect(result.reachable).toBe(true);
     expect(result.authenticated).toBe(true);
-    expect(harness.smtp.calls.map((c) => c.name)).toEqual(['verify']);
+    // And it closes what it opened. The description says so, and `verify()`
+    // otherwise leaves an authenticated, pooled connection open for the
+    // lifetime of the process.
+    expect(harness.smtp.calls.map((c) => c.name)).toEqual(['verify', 'close']);
     expect(harness.smtp.delivered).toHaveLength(0);
     await harness.close();
   });

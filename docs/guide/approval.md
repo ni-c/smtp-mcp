@@ -103,7 +103,8 @@ Two things make it visible rather than silent:
   server it actually reached:
 
   ```
-  smtp-mcp: ELICITATION=false — guarded tools fall back to the two-call token
+  smtp-mcp: ELICITATION=false — send_mail, reply_mail and forward_mail fall back
+  to the two-call token, which a model can satisfy on its own
   ```
 
 - the fallback text names the server that did not ask, instead of blaming a

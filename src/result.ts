@@ -241,7 +241,15 @@ export function sanitizeErrorBody(body: string): string {
   // Anything markup-shaped: a reverse proxy's error page or a WAF block page.
   // The check is deliberately loose — an XML declaration, a leading comment or
   // a doctype followed by a newline are all the same thing here.
-  if (/^(<!doctype|<html[\s>]|<\?xml|<!--)/i.test(trimmed)) {
+  //
+  // And it is not anchored, because the string does not start where the page
+  // does. nodemailer prefixes its own text before throwing (`_formatError`
+  // appends the response to its message), so a captive portal answering on the
+  // submission port arrives as `Invalid login: <html>…` — which an anchored
+  // test misses, letting two thousand characters of somebody else's prose into
+  // the model's context. The window is short so that a body merely *mentioning*
+  // `<html>` further down is still reported.
+  if (/^.{0,100}?(<!doctype|<html[\s>]|<\?xml|<!--)/is.test(trimmed)) {
     return '(HTML error page omitted)';
   }
   if (trimmed.length > MAX_ERROR_BODY_LENGTH) {

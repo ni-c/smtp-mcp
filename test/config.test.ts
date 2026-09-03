@@ -108,10 +108,13 @@ describe('loadConfig', () => {
     errors.mockRestore();
   });
 
-  it('removes the password from the environment', () => {
+  it('removes the credentials from the environment', () => {
+    // The user name too: half a credential, and for most providers also the
+    // mailbox address.
     const environment = env();
     loadConfig(environment);
     expect(environment.SMTP_PASSWORD).toBeUndefined();
+    expect(environment.SMTP_USER).toBeUndefined();
   });
 
   it('removes the password even when the rest of the config is missing', () => {

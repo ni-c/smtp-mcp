@@ -165,12 +165,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const user = env.SMTP_USER;
   const password = env.SMTP_PASSWORD;
 
-  // Removed here, before any branch below can return or exit: the password must
-  // not stay in the environment for the process lifetime, where it is visible
-  // to child processes and in /proc/<pid>/environ. Doing this after the
-  // validation below would leave it in place on exactly the paths where
+  // Removed here, before any branch below can return or exit: the credentials
+  // must not stay in the environment for the process lifetime, where they are
+  // visible to child processes and in /proc/<pid>/environ. Doing this after the
+  // validation below would leave them in place on exactly the paths where
   // somebody attaches an inspector to work out why the server will not start.
+  //
+  // The user name goes too. It is half of a credential and, for most providers,
+  // also the mailbox address — the same reason `SMTP_FROM` stays out of error
+  // text. Both are held in the config from here on.
   delete env.SMTP_PASSWORD;
+  delete env.SMTP_USER;
 
   const tls = parseTlsMode(env.SMTP_TLS);
   // After the password delete, deliberately: this one can exit the process, and

@@ -382,6 +382,11 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
     () =>
       run(async () => {
         await client.verify();
+        // The description says this opens a session and closes it again, and
+        // it has to be true: `verify()` leaves an authenticated, pooled
+        // connection open for the lifetime of the process, and a diagnostic
+        // that quietly holds a session is not a diagnostic. `send` reopens.
+        client.close();
         return jsonResult({
           reachable: true,
           host: config.smtp.host ?? null,
