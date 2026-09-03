@@ -86,6 +86,6 @@ repository ships a throwaway [Mailpit](https://mailpit.axllent.org/) instance th
 SMTP and delivers nowhere:
 
 ```sh
-docker compose -f scripts/sandbox/docker-compose.yml up -d
-npm run build && node scripts/sandbox/smoke.mjs
+docker compose -f test/integration/compose.yml up -d --wait
+npm run build && npm run test:integration
 ```

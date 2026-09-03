@@ -1,4 +1,4 @@
-import { internalHostKind } from './hosts.js';
+import { internalHostKind } from 'mcp-internal-hosts';
 import { parseAllowlist, type RecipientRule } from './recipients.js';
 
 /** How the connection to the SMTP server is encrypted. */
@@ -37,6 +37,18 @@ export interface Config {
    * server whose worst day happens before anybody has read its README.
    */
   allowSend: boolean;
+  /**
+   * Whether a client that *can* show a dialog is asked before a guarded tool
+   * acts. `ELICITATION=false` turns the dialog off — the guard stays and falls
+   * back to the two-call token, so there is no setting in which a guarded call
+   * goes unannounced.
+   *
+   * This is the server where a globally set `ELICITATION=false` costs the most:
+   * every send asks, and the fallback token is something a model can satisfy
+   * on its own. The startup line and the fallback wording exist for that.
+   */
+  elicitation: boolean;
+
   /**
    * Who may receive mail. Empty means nothing was configured, which is only
    * reachable while {@link allowSend} is false — see `loadConfig`.
@@ -146,6 +158,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   delete env.SMTP_PASSWORD;
 
   const tls = parseTlsMode(env.SMTP_TLS);
+  // After the password delete, deliberately: this one can exit the process, and
+  // an exit above the delete would leave the password in the environment for
+  // whatever runs next.
+  const elicitation = parseElicitation(env.ELICITATION);
 
   if (host !== undefined) assertSafeHost(host, 'SMTP_HOST');
 
@@ -193,6 +209,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     // Defaults to false — see the field comment.
     allowSend: env.SMTP_ALLOW_SEND === 'true',
+    elicitation,
     allowedRecipients,
     allowedRecipientsRaw,
     maxRecipients: parseCount(
@@ -257,6 +274,31 @@ function defaultPort(tls: TlsMode): number {
   if (tls === 'implicit') return 465;
   if (tls === 'starttls') return 587;
   return 25;
+}
+
+/**
+ * Reads `ELICITATION` — deliberately unprefixed, and deliberately fatal on
+ * anything it does not recognise.
+ *
+ * Unprefixed: environment variables are process-wide, so this is one switch for
+ * every server in the same environment. That is also its risk, and nowhere more
+ * than here — this is the server that asks before every single message it
+ * sends — which is why a server started with it off says so on its startup line.
+ *
+ * Fatal, like `parseTlsMode` below and unlike `SMTP_ALLOW_SEND`: this is the
+ * first variable of the family that defaults to *on*, so a typo that fell back
+ * to the default would leave the dialog running while the operator believes it
+ * is off — and an operator who believes that has no way to find out.
+ */
+export function parseElicitation(raw: string | undefined): boolean {
+  const value = raw?.trim().toLowerCase();
+  if (value === undefined || value === '' || value === 'true') return true;
+  if (value === 'false') return false;
+  console.error(
+    `smtp-mcp: ELICITATION must be "true" or "false" — got "${raw}". ` +
+      'Refusing to start rather than guess.'
+  );
+  process.exit(1);
 }
 
 function parseTlsMode(raw: string | undefined): TlsMode {

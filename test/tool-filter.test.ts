@@ -1,60 +1,80 @@
+/**
+ * What this repository still has to prove about its tool filter.
+ *
+ * The filter lives in `mcp-tool-allowlist` and is tested there: pattern syntax,
+ * the preset, how a rejected entry is quoted back, the shape of every message.
+ * Repeating that here would test the dependency.
+ *
+ * What only this repository can assert is the wiring — that the catalogue names
+ * exactly the tools the server registers, that the send gate is the thing the
+ * `gate` parameter is wired to, that the messages name *these* variables, and
+ * that a filtered tool is really gone rather than merely hidden.
+ */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { buildToolFilter, ToolFilterError } from '../src/tool-filter.js';
-import { ESSENTIAL_TOOLS, INFO_TOOLS } from '../src/tools/catalogue.js';
+import { buildToolFilter, ToolFilterError } from 'mcp-tool-allowlist';
 
-import { call, connect, textOf, toolNames } from './harness.js';
+import {
+  ALL_TOOLS,
+  ESSENTIAL_TOOLS,
+  INFO_TOOLS,
+} from '../src/tools/catalogue.js';
+
+import { call, connect, toolNames } from './harness.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+/**
+ * This server's wiring of `buildToolFilter`, so the cases below stay about the
+ * catalogue and the send gate rather than about the option object. It has to
+ * match src/server.ts — that it does is what the end-to-end cases prove.
+ */
+function build(
+  allowTools: string | undefined,
+  denyTools: string | undefined = undefined,
+  allowSend = true
+) {
+  return buildToolFilter({
+    allowTools,
+    denyTools,
+    catalogue: {
+      all: ALL_TOOLS,
+      essential: ESSENTIAL_TOOLS,
+      ungated: INFO_TOOLS,
+    },
+    names: {
+      allow: 'SMTP_ALLOW_TOOLS',
+      deny: 'SMTP_DENY_TOOLS',
+      server: 'smtp-mcp',
+    },
+    gate: {
+      closed: !allowSend,
+      variable: 'SMTP_ALLOW_SEND',
+      noun: 'the send gate',
+    },
+  });
+}
 
 function filter(
   allowTools: string | undefined,
   denyTools: string | undefined = undefined,
   allowSend = true
 ): Set<string> {
-  const built = buildToolFilter({ allowTools, denyTools, allowSend });
-  return new Set(built.selected);
+  return new Set(build(allowTools, denyTools, allowSend).selected);
 }
 
 describe('buildToolFilter', () => {
   it('is inactive when neither variable is set', () => {
-    const built = buildToolFilter({
-      allowTools: undefined,
-      denyTools: undefined,
-      allowSend: true,
-    });
+    const built = build(undefined);
     expect(built.active).toBe(false);
-  });
-
-  it('treats an empty or whitespace-only value as unset', () => {
-    // `SMTP_ALLOW_TOOLS=` in a compose file must not mean "allow nothing".
-    for (const value of ['', '   ', ',,']) {
-      expect(
-        buildToolFilter({
-          allowTools: value,
-          denyTools: undefined,
-          allowSend: true,
-        }).active
-      ).toBe(false);
-    }
   });
 
   it('selects exactly the named tools', () => {
     expect(filter('get_server_info,send_mail')).toEqual(
       new Set(['get_server_info', 'send_mail'])
     );
-  });
-
-  it('trims and lower-cases entries', () => {
-    expect(filter(' Get_Server_Info , SEND_MAIL ')).toEqual(
-      new Set(['get_server_info', 'send_mail'])
-    );
-  });
-
-  it('expands a trailing-star prefix', () => {
-    expect(filter('send_*')).toEqual(new Set(['send_mail']));
   });
 
   it('resolves the essential preset', () => {
@@ -77,11 +97,6 @@ describe('buildToolFilter', () => {
     expect(() => filter('send_email')).toThrow(ToolFilterError);
     expect(() => filter('send_email')).toThrow(/no tool matches/);
     expect(() => filter(undefined, 'delete_all')).toThrow(/no tool matches/);
-  });
-
-  it('refuses a malformed pattern', () => {
-    expect(() => filter('*_mail')).toThrow(/prefix/);
-    expect(() => filter('send_*_x')).toThrow(/prefix/);
   });
 
   it('names the send gate when an exact sending tool is asked for with it off', () => {
@@ -129,9 +144,11 @@ describe('installToolFilter, end to end', () => {
     expect(await toolNames(harness.client)).not.toContain('forward_mail');
     // "not found", exactly like a tool the send gate never registered — not
     // "disabled", which would be advertising a refusal.
-    const result = await call(harness.client, 'forward_mail', {});
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatch(/not found/i);
+    // SDK v2 answers a call to an unknown tool with a JSON-RPC error rather
+    // than a result carrying isError; the tool is still removed, not disabled.
+    await expect(call(harness.client, 'forward_mail', {})).rejects.toThrow(
+      /not found/i
+    );
     await harness.close();
   });
 

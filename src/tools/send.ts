@@ -1,20 +1,17 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-
-import { requestApproval } from '../approval.js';
-import { audit } from '../audit.js';
-import {
-  setResourceKey,
-  type ConfirmationDetail,
-  type ConfirmationStore,
-} from '../confirm.js';
+import type {
+  McpServer,
+  CallToolResult,
+  InputRequiredResult,
+  ServerContext,
+} from '@modelcontextprotocol/server';
+import { setResourceKey } from 'mcp-approval';
+import type { ConfirmationDetail, ConfirmationStore } from 'mcp-approval';
 import {
   messageFingerprint,
   prepareMessage,
   type MailArgs,
   type PreparedMessage,
 } from '../prepare.js';
-import type { RateLimitSlot } from '../ratelimit.js';
-import { jsonResult, run } from '../result.js';
 import {
   attachmentsParam,
   bccParam,
@@ -28,9 +25,13 @@ import {
   subjectParam,
   toParam,
 } from '../schema.js';
-import type { ToolContext } from './context.js';
+import { z } from 'zod';
 
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { audit } from '../audit.js';
+import type { RateLimitSlot } from '../ratelimit.js';
+import { ToolInputError } from '../errors.js';
+import { jsonResult, run } from '../result.js';
+import type { ToolContext } from './context.js';
 
 const MAX_SUBJECT = 255;
 
@@ -81,19 +82,52 @@ function listFor(addresses: readonly string[]): string {
  */
 async function performSend(
   server: McpServer,
+  mcp: ServerContext,
   ctx: ToolContext,
   confirmations: ConfirmationStore,
   tool: string,
   verb: string,
   args: MailArgs,
   confirmToken: string | undefined
-): Promise<CallToolResult> {
+): Promise<CallToolResult | InputRequiredResult> {
   const prepared = await prepareMessage(args, ctx.config, ctx.version);
+  const resourceKey = setResourceKey(tool, messageFingerprint(args, prepared));
+
+  // At-most-once, before anything else costs anything.
+  //
+  // A tool call is at-least-once by nature: a client that times out and
+  // retries, a host that reconnects mid-flow, a model that repeats itself.
+  // Everywhere else in this family that is harmless, because the guarded
+  // operation is idempotent. Here the second call reaches a person, and
+  // neither copy can be recalled — so the fingerprint the approval is already
+  // bound to is remembered, and a repeat is answered rather than sent.
+  const already = ctx.sent.find(resourceKey);
+  if (already !== undefined) {
+    return jsonResult({
+      sent: false,
+      already_sent: true,
+      message_id: already.messageId,
+      // The addresses, not a count. Both branches of this tool answer with the
+      // same key, and one of them used to put a number where the other put a
+      // list — which nothing noticed until the tool had to declare what it
+      // returns.
+      accepted: already.accepted,
+      rejected: [],
+      sends_remaining_this_hour: ctx.limiter.remaining(),
+      note:
+        'This exact message — same recipients, subject, body, quote, HTML and ' +
+        `attachments — was already accepted by the SMTP server as ` +
+        `${already.messageId}. It was NOT sent a second time, and nobody was ` +
+        'asked again. If a second copy really is wanted, change something in ' +
+        'the message.',
+    });
+  }
 
   const slot = ctx.limiter.reserve();
   try {
     return await withSlot(
       server,
+      mcp,
       ctx,
       confirmations,
       tool,
@@ -101,7 +135,8 @@ async function performSend(
       args,
       confirmToken,
       prepared,
-      slot
+      slot,
+      resourceKey
     );
   } catch (error) {
     slot.release();
@@ -111,6 +146,7 @@ async function performSend(
 
 async function withSlot(
   server: McpServer,
+  mcp: ServerContext,
   ctx: ToolContext,
   confirmations: ConfirmationStore,
   tool: string,
@@ -118,8 +154,9 @@ async function withSlot(
   args: MailArgs,
   confirmToken: string | undefined,
   prepared: PreparedMessage,
-  slot: RateLimitSlot
-): Promise<CallToolResult> {
+  slot: RateLimitSlot,
+  resourceKey: string
+): Promise<CallToolResult | InputRequiredResult> {
   const details: ConfirmationDetail[] = [
     {
       label: 'From (fixed by SMTP_FROM)',
@@ -140,6 +177,29 @@ async function withSlot(
     });
   }
   details.push({ label: 'Subject', value: args.subject });
+  // The message itself, which the dialog used not to show at all.
+  //
+  // Every other layer bound the *envelope*: the allowlist says who may be
+  // written to, the fingerprint ties the approval to these exact recipients,
+  // the rate limit caps how many go out. None of them looks at what is written.
+  // A model steered by an injected instruction that mails local secrets to an
+  // address already on the allowlist passed all three, and the human agreed to
+  // a body nobody had read.
+  //
+  // `mcp-approval` cuts every value to 200 characters and flattens it to one
+  // line, so this cannot push the recipients off the screen — and the character
+  // count in the label is what makes the part that is *not* shown visible.
+  for (const [label, value] of [
+    ['Body', args.body],
+    ['Quoted original', args.quote],
+    ['HTML part', args.html],
+  ] as const) {
+    if (value === undefined) continue;
+    details.push({
+      label: `${label} (${value.length} characters)`,
+      value: value === '' ? '(empty)' : value,
+    });
+  }
   if (prepared.attachments.length > 0) {
     details.push({
       label: 'Attachments',
@@ -168,26 +228,86 @@ async function withSlot(
       `${prepared.composed.htmlRemoved.join(', ')}.`;
   }
 
-  const approval = await requestApproval(server, confirmations, {
-    what: `${verb} to ${prepared.composed.envelope.to.length} recipient(s)`,
-    consequence,
-    resourceKey: setResourceKey(tool, messageFingerprint(args, prepared)),
-    token: confirmToken,
-    details,
-  });
-  if (!approval.approved) {
-    // Asked and not answered yet, or declined. Either way nothing left the
-    // building, so the slot goes back.
+  const outcome = await ctx.approval.requestApproval(
+    server,
+    mcp,
+    confirmations,
+    {
+      what: `${verb} to ${prepared.composed.envelope.to.length} recipient(s)`,
+      consequence,
+      resourceKey,
+      token: confirmToken,
+      toolName: tool,
+      details,
+    }
+  );
+  if (outcome.decision !== 'approved') {
+    // Asked and not answered yet, refused, or declined. Either way nothing left
+    // the building, so the slot goes back. The caller's catch would release it
+    // for the two that throw, but releasing here keeps all four in one place.
     slot.release();
-    return approval.result;
+    if (outcome.decision === 'rejected') {
+      throw new ToolInputError(`smtp-mcp: ${outcome.reason}`);
+    }
+    if (outcome.decision === 'declined') {
+      throw new ToolInputError(
+        'smtp-mcp: the user declined. Nothing was sent.'
+      );
+    }
+    return outcome.result;
   }
 
-  const outcome = await ctx.client.send({
-    envelope: prepared.composed.envelope,
-    raw: prepared.composed.raw,
-  });
+  // A failure here is not one failure but two that look alike. A refused
+  // connection, bad credentials or a rejected envelope means nothing left the
+  // building. A connection lost after the end of DATA and before the 250 means
+  // the message may already be queued for delivery — and nodemailer cannot tell
+  // the two apart either, so neither can this.
+  //
+  // Both consequences therefore follow the unsafe reading. The rate-limit slot
+  // is kept rather than released, because a message that may be on its way has
+  // to count against the hour. And a line is written recording the outcome as
+  // unknown, because a delivered message with no record at all is precisely the
+  // failure this log exists to prevent — it describes itself as the place a
+  // person reconstructs what a hijacked session actually sent.
+  //
+  // What is deliberately not done is remembering it as sent. Most failures on
+  // this path are real failures, and locking the retry out for fifteen minutes
+  // would be the wrong trade for the common case. So a retry after this one
+  // error is the single path on which this server can still deliver twice, and
+  // SECURITY.md says so rather than leaving it to be discovered.
+  let sent;
+  try {
+    sent = await ctx.client.send({
+      envelope: prepared.composed.envelope,
+      raw: prepared.composed.raw,
+    });
+  } catch (error) {
+    slot.commit();
+    audit(
+      tool,
+      {
+        from: ctx.config.smtp.fromAddress,
+        to: prepared.to,
+        cc: prepared.cc.length > 0 ? prepared.cc : undefined,
+        bcc: prepared.bcc.length > 0 ? prepared.bcc : undefined,
+        subject: args.subject,
+        message_id: prepared.composed.messageId,
+        bytes: prepared.composed.bytes,
+        outcome: 'unknown — the server did not confirm; it may have been sent',
+        error: error instanceof Error ? error.message : String(error),
+      },
+      ctx.config.auditLog
+    );
+    throw error;
+  }
 
   slot.commit();
+  // Before the audit line and before the result: from here on a retry of this
+  // same call must be answered, not repeated.
+  ctx.sent.record(resourceKey, {
+    messageId: prepared.composed.messageId,
+    accepted: sent.accepted,
+  });
   audit(
     tool,
     {
@@ -202,26 +322,54 @@ async function withSlot(
         prepared.attachments.length > 0
           ? prepared.attachments.map((a) => a.filename)
           : undefined,
-      accepted: outcome.accepted.length,
-      rejected: outcome.rejected.length > 0 ? outcome.rejected : undefined,
+      accepted: sent.accepted.length,
+      rejected: sent.rejected.length > 0 ? sent.rejected : undefined,
     },
     ctx.config.auditLog
   );
 
   return jsonResult({
     sent: true,
+    already_sent: false,
     message_id: prepared.composed.messageId,
-    accepted: outcome.accepted,
-    rejected: outcome.rejected,
+    accepted: sent.accepted,
+    rejected: sent.rejected,
     bytes: prepared.composed.bytes,
     sends_remaining_this_hour: ctx.limiter.remaining(),
     note:
-      outcome.rejected.length === 0
+      sent.rejected.length === 0
         ? 'The SMTP server accepted the message. It cannot be recalled.'
         : 'The SMTP server accepted the message for some recipients and ' +
           'refused others — see "rejected". Those people did not receive it.',
   });
 }
+
+/**
+ * What the three send tools answer with — one shape for both outcomes.
+ *
+ * A repeat of a message already accepted answers `sent: false` with
+ * `already_sent: true` and the same `message_id`, rather than a different
+ * shape: a client should be able to read one field to find out what happened.
+ * Making that true also turned up a defect — the two branches used `accepted`
+ * for an address list and for a count of them.
+ */
+const sendOutcome = z.object({
+  sent: z.boolean().describe('False when this exact message already went out.'),
+  already_sent: z.boolean(),
+  message_id: z.string(),
+  accepted: z
+    .array(z.string())
+    .describe('Addresses the SMTP server took responsibility for.'),
+  // Strings, not `unknown`: nodemailer types the entry as an address object,
+  // but `sendMail` in `smtp.ts` maps every one of them through `String` before
+  // it gets here.
+  rejected: z
+    .array(z.string())
+    .describe('Addresses it refused. These people did not receive it.'),
+  bytes: z.number().int().optional(),
+  sends_remaining_this_hour: z.number().int(),
+  note: z.string(),
+});
 
 export function registerSendTools(
   server: McpServer,
@@ -239,7 +387,7 @@ export function registerSendTools(
         'SMTP_ALLOWED_RECIPIENTS. There is no "from" parameter — the sender is ' +
         'fixed by SMTP_FROM. Use preview_mail first if you want to see the ' +
         'message without sending it.',
-      inputSchema: {
+      inputSchema: z.object({
         to: toParam,
         cc: ccParam,
         bcc: bccParam,
@@ -248,13 +396,25 @@ export function registerSendTools(
         html: htmlParam,
         attachments: attachmentsParam,
         confirm_token: confirmTokenParam,
+      }),
+      annotations: {
+        // Sending is the case these four hints were not designed for. Nothing
+        // is destroyed — and the message is in somebody else's inbox and
+        // cannot be recalled. destructiveHint is the closest the vocabulary
+        // comes to that; the dialog is the real gate. Not idempotent: each
+        // call sends another copy.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
       },
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      outputSchema: sendOutcome,
     },
-    ({ confirm_token, ...args }) =>
+    ({ confirm_token, ...args }, mcp) =>
       run(() =>
         performSend(
           server,
+          mcp,
           ctx,
           confirmations,
           'send_mail',
@@ -275,7 +435,7 @@ export function registerSendTools(
         "imap-mcp's get_message returns both. The subject is derived from " +
         'original_subject with a single "Re: " unless you override it. Asks ' +
         'the user to confirm, like every sending tool here.',
-      inputSchema: {
+      inputSchema: z.object({
         to: toParam,
         cc: ccParam,
         bcc: bccParam,
@@ -292,13 +452,25 @@ export function registerSendTools(
         references: referencesParam,
         attachments: attachmentsParam,
         confirm_token: confirmTokenParam,
+      }),
+      annotations: {
+        // Sending is the case these four hints were not designed for. Nothing
+        // is destroyed — and the message is in somebody else's inbox and
+        // cannot be recalled. destructiveHint is the closest the vocabulary
+        // comes to that; the dialog is the real gate. Not idempotent: each
+        // call sends another copy.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
       },
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      outputSchema: sendOutcome,
     },
-    ({ confirm_token, original_subject, subject, ...rest }) =>
+    ({ confirm_token, original_subject, subject, ...rest }, mcp) =>
       run(() =>
         performSend(
           server,
+          mcp,
           ctx,
           confirmations,
           'reply_mail',
@@ -320,7 +492,7 @@ export function registerSendTools(
         'altering it. Attachments of the original are not carried over ' +
         'automatically; name them in "attachments" after saving them into ' +
         'SMTP_ATTACHMENT_DIR. Asks the user to confirm.',
-      inputSchema: {
+      inputSchema: z.object({
         to: toParam,
         cc: ccParam,
         bcc: bccParam,
@@ -340,13 +512,25 @@ export function registerSendTools(
         references: referencesParam,
         attachments: attachmentsParam,
         confirm_token: confirmTokenParam,
+      }),
+      annotations: {
+        // Sending is the case these four hints were not designed for. Nothing
+        // is destroyed — and the message is in somebody else's inbox and
+        // cannot be recalled. destructiveHint is the closest the vocabulary
+        // comes to that; the dialog is the real gate. Not idempotent: each
+        // call sends another copy.
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+        openWorldHint: false,
       },
-      annotations: { readOnlyHint: false, destructiveHint: true },
+      outputSchema: sendOutcome,
     },
-    ({ confirm_token, original_subject, subject, ...rest }) =>
+    ({ confirm_token, original_subject, subject, ...rest }, mcp) =>
       run(() =>
         performSend(
           server,
+          mcp,
           ctx,
           confirmations,
           'forward_mail',

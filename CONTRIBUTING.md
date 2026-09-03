@@ -12,18 +12,46 @@ npm test
 npm run build
 ```
 
-For anything touching the send path you want a real SMTP server that delivers nowhere. There is
-a throwaway one in the repository:
+## Running the integration suite
+
+Everything in `test/` runs against an in-memory fake, which is the right trade for a unit suite
+and proves nothing about MIME encoding, the SMTP dialogue or the envelope. The integration suite
+spawns the built server over stdio against a throwaway [Mailpit](https://mailpit.axllent.org/)
+and calls **every tool in the catalogue**, then reads each message back out of Mailpit — so the
+assertions are about what _arrived_, not about what the tool said it did.
 
 ```sh
-docker compose -f scripts/sandbox/docker-compose.yml up -d
-npm run build && node scripts/sandbox/smoke.mjs
+docker compose -f test/integration/compose.yml up -d --wait
+npm run build && npm run test:integration
+docker compose -f test/integration/compose.yml down -v
 ```
 
-See [`scripts/sandbox/README.md`](scripts/sandbox/README.md). **Develop against it, not against
-a real mailbox.** This server's whole job is to put messages on the wire, and a test run that
-goes wrong sends real mail to real people — which is the one mistake here that cannot be undone
-by reverting a commit.
+- SMTP on `127.0.0.1:1025`, no TLS, any credentials accepted
+- Web UI and API on <http://127.0.0.1:8025>
+
+Both ports are bound to loopback. **Do not change that:** Mailpit accepts mail from anyone
+without authentication, so a port published on `0.0.0.0` is an open relay on your local network
+for as long as the container runs. If something already listens on one of them — 8025 is a
+popular port — override both, and pass the same values to the suite, which reads the identical
+variables:
+
+```sh
+export MAILPIT_SMTP_PORT=1125 MAILPIT_UI_PORT=8125
+docker compose -f test/integration/compose.yml up -d --wait
+npm run test:integration
+```
+
+**Develop against it, not against a real mailbox.** This server's whole job is to put messages
+on the wire, and a test run that goes wrong sends real mail to real people — which is the one
+mistake here that cannot be undone by reverting a commit. The suite sets `SMTP_ALLOW_SEND=true`
+and `SMTP_ALLOWED_RECIPIENTS=@example.net`, and the harness refuses any backend that is not on
+this machine.
+
+One thing about reading messages back that cost an afternoon: Mailpit's `/raw` is **not** the
+wire message. It prepends a `Bcc:` line reconstructed from the envelope — recipients minus To
+and Cc — above even its own `Received` header, so `/raw` always says the Bcc travelled in the
+headers. It cannot answer that question. The wire bytes are asserted in `test/compose.test.ts`;
+the suite checks the observable consequence instead.
 
 To drive the server by hand:
 
@@ -57,7 +85,7 @@ npx @modelcontextprotocol/inspector --cli node dist/index.js --method tools/list
 
 - **The quoted original is passed on unchanged.** Warn about it, never rewrite it.
 - **No new runtime dependencies** without a very good reason; the small tree is a feature.
-- Run `npm run lint` before pushing — it checks both eslint and prettier, and prettier also
+- Run `npm run lint` before pushing — it checks both oxlint and prettier, and prettier also
   validates the YAML, JSON and Markdown files.
 
 ## Questions and bugs

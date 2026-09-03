@@ -110,8 +110,10 @@ describe('widening an approved message', () => {
       })
     );
     expect(harness.smtp.delivered).toHaveLength(0);
-    // It is answered with a fresh confirmation, not with a send.
-    expect(textOf(widened)).toMatch(/confirm_token=/);
+    // A token that does not match this exact message is refused with the
+    // reason rather than answered with a fresh prompt. The binding is the
+    // same — nothing was sent — and the wording is the library's.
+    expect(textOf(widened)).toMatch(/invalid, expired/);
     await harness.close();
   });
 
@@ -149,7 +151,10 @@ describe('widening an approved message', () => {
       sendArgs({ confirm_token: 'f'.repeat(32) })
     );
     expect(harness.smtp.delivered).toHaveLength(0);
-    expect(textOf(result)).toMatch(/confirm_token=/);
+    // A token that does not match this exact message is refused with the
+    // reason rather than answered with a fresh prompt. The binding is the
+    // same — nothing was sent — and the wording is the library's.
+    expect(textOf(result)).toMatch(/invalid, expired/);
     await harness.close();
   });
 });
@@ -296,9 +301,12 @@ describe('reaching the filesystem through an attachment', () => {
 describe('the shape of the default installation', () => {
   it('cannot send at all before an operator turns it on', async () => {
     const harness = await connect();
-    const result = await call(harness.client, 'send_mail', sendArgs());
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatch(/not found/i);
+    // SDK v2 answers a call to an unknown tool with a JSON-RPC error rather
+    // than a result carrying isError. The tool is still absent and the SMTP
+    // server is still never reached, which is what this test is about.
+    await expect(call(harness.client, 'send_mail', sendArgs())).rejects.toThrow(
+      /not found/i
+    );
     expect(harness.smtp.calls).toHaveLength(0);
     await harness.close();
   });
@@ -395,13 +403,113 @@ describe('forging a line in the confirmation dialog', () => {
       config: { allowSend: true },
       elicit: 'accept',
     });
-    await call(harness.client, 'send_mail', sendArgs());
+    await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ body: 'Line one.\nLine two.\rLine three.' })
+    );
     const labelled = harness.prompts
       .join('\n')
       .split('\n')
       .filter((line) => /^ {2}\w[\w ()_]*:/.test(line));
-    // From, To and Subject — one line each, no more.
-    expect(labelled).toHaveLength(3);
+    // From, To, Subject and Body — one line each, no more. The body carries
+    // line breaks of its own and still occupies exactly one of them.
+    expect(labelled).toHaveLength(4);
+    expect(labelled.filter((line) => line.startsWith('  Body'))).toHaveLength(
+      1
+    );
+    await harness.close();
+  });
+
+  it('refuses an RFC 2047 encoded-word in the subject', async () => {
+    // The dialog shows the literal string; the recipient's client decodes it to
+    // "Payment details changed - new IBAN below". The human would be reading a
+    // different subject from the one that arrives.
+    const harness = await connect({ config: { allowSend: true } });
+    const result = await call(
+      harness.client,
+      'send_mail',
+      sendArgs({
+        subject:
+          '=?utf-8?B?UGF5bWVudCBkZXRhaWxzIGNoYW5nZWQgLSBuZXcgSUJBTiBiZWxvdw==?=',
+      })
+    );
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/encoded-word/);
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('refuses the quoted-printable spelling and an encoded original subject', async () => {
+    const harness = await connect({ config: { allowSend: true } });
+    const encodedQ = await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ subject: 'Re: =?iso-8859-1?Q?Zahlung=20ge=E4ndert?=' })
+    );
+    expect(encodedQ.isError).toBe(true);
+    const encodedOriginal = await call(harness.client, 'reply_mail', {
+      to: ['anna@example.net'],
+      original_subject: '=?utf-8?B?SW52b2ljZQ==?=',
+      body: 'Thanks.',
+    });
+    expect(encodedOriginal.isError).toBe(true);
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+
+  it('still carries a genuinely non-ASCII subject, encoded on the way out', async () => {
+    // Refusing the encoded form costs nothing precisely because this works.
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ subject: 'Zahlung geändert – Übersicht' })
+    );
+    const raw = harness.smtp.only().raw;
+    expect(raw).toMatch(/^Subject: =\?UTF-8\?/im);
+    await harness.close();
+  });
+
+  it('shows the body, and how much of it is not being shown', async () => {
+    // Every other layer binds the envelope. A message to an allowlisted
+    // recipient carrying exfiltrated text passes all of them, and the human
+    // used to approve a body that appeared nowhere in the dialog.
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    const body = `Here are the credentials: ${'s'.repeat(400)}`;
+    await call(harness.client, 'send_mail', sendArgs({ body }));
+    const prompt = harness.prompts.join('\n');
+    expect(prompt).toContain('Here are the credentials:');
+    expect(prompt).toContain(`Body (${body.length} characters)`);
+    // The library cuts at 200 and says so, which is why the count matters.
+    expect(prompt).toContain('(truncated)');
+    await harness.close();
+  });
+
+  it('shows the quoted original and the HTML part when they are set', async () => {
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    await call(harness.client, 'forward_mail', {
+      to: ['anna@example.net'],
+      original_subject: 'Invoice',
+      body: '',
+      quote: 'The original text of the message.',
+      html: '<p>My own note.</p>',
+    });
+    const prompt = harness.prompts.join('\n');
+    expect(prompt).toContain('Body (0 characters): (empty)');
+    expect(prompt).toContain('Quoted original (33 characters)');
+    expect(prompt).toContain('The original text of the message.');
+    expect(prompt).toContain('HTML part (19 characters)');
+    expect(prompt).toContain('My own note.');
     await harness.close();
   });
 });

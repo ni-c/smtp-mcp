@@ -1,0 +1,36 @@
+# Throwaway SMTP server for `npm run test:integration`.
+#
+# Not a managed stack: bring it up, run the suite against it, tear it down.
+# Nothing here is configured for anything but a workstation, and it holds no
+# mail worth keeping.
+#
+#   docker compose -f test/integration/compose.yml up -d --wait
+#   docker compose -f test/integration/compose.yml down -v
+#
+# Bound to loopback only. That is not tidiness: Mailpit accepts mail from
+# anyone with no authentication, so a port published on 0.0.0.0 is an open
+# relay on the local network for as long as it runs.
+services:
+  mailpit:
+    # Pinned by digest as well as tag, because a moved tag is exactly the kind
+    # of drift the weekly run exists to report rather than to absorb silently.
+    image: ${MAILPIT_IMAGE:-axllent/mailpit:v1.31.0@sha256:c96991d9bef73594c246d89ca81411d4e916f03e76a7d2d72fa2ab5dd3c9ce24}
+    restart: 'no'
+    ports:
+      # SMTP, and the web UI. Both loopback, both throwaway.
+      #
+      # Overridable because 8025 in particular is a popular port and a
+      # workstation that already runs something there should not need a patched
+      # compose file. Set MAILPIT_SMTP_PORT / MAILPIT_UI_PORT; the suite reads
+      # the same two variables.
+      - '127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025'
+      - '127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025'
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+      MP_MAX_MESSAGES: 500
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 3s
+      timeout: 5s
+      retries: 20

@@ -7,6 +7,7 @@
 [![license](https://img.shields.io/npm/l/%40ni-c%2Fsmtp-mcp)](LICENSE)
 [![container](https://img.shields.io/badge/ghcr.io-ni--c%2Fsmtp--mcp-blue)](https://github.com/ni-c/smtp-mcp/pkgs/container/smtp-mcp)
 [![docs](https://img.shields.io/badge/docs-smtp--mcp.ni--c.de-informational)](https://smtp-mcp.ni-c.de)
+[![HTTP • via mcp-hub](https://img.shields.io/badge/HTTP-via%20mcp--hub-6f42c1)](https://mcp-hub.ni-c.de)
 [![sponsor](https://img.shields.io/badge/sponsor-ni--c-ea4aaa?logo=githubsponsors&logoColor=white)](https://github.com/sponsors/ni-c)
 
 A [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server for
@@ -95,6 +96,7 @@ message they wrote.
 | `SMTP_ALLOW_TOOLS`          | no                          | —                            | Tool names, a prefix with one trailing `*`, or `essential`.                           |
 | `SMTP_DENY_TOOLS`           | no                          | —                            | Removed after `SMTP_ALLOW_TOOLS` is applied.                                          |
 | `SMTP_INSECURE_TLS`         | no                          | `false`                      | Accept self-signed certificates.                                                      |
+| `ELICITATION`               | no                          | `true`                       | `false` replaces the approval dialog with the two-call token. **Not prefixed.**       |
 
 Two defaults are worth reading twice, because they are the opposite of what the rest of this
 family does:
@@ -185,6 +187,40 @@ docker run --rm -i \
 If you run several of these servers at once, [mcp-hub](https://mcp-hub.ni-c.de) is the other
 answer — its `/hub` endpoint replaces every server's tools with six meta-tools.
 
+### Through mcp-hub
+
+A client that cannot spawn a local process — ChatGPT connectors, Claude on the web,
+Cursor, LibreChat — reaches smtp-mcp through [mcp-hub](https://mcp-hub.ni-c.de): one
+container serves many stdio MCP servers over Streamable HTTP, with an OAuth 2.1 login
+behind a single password and long-lived tokens for the clients that cannot do OAuth. Its
+`/hub` endpoint puts every server behind six meta-tools, so one connector reaches all of
+them without N×tool schemas in the model's context, and it speaks both protocol revisions
+— a question this server asks travels through it to the person at the far end.
+
+Its `/config/mcp.json` uses Claude Code's format, so the entry is the one you already
+have:
+
+```json
+{
+  "mcpServers": {
+    "smtp-mcp": {
+      "command": "npx",
+      "args": ["-y", "@ni-c/smtp-mcp"],
+      "env": {
+        "SMTP_HOST": "smtp.example.net",
+        "SMTP_USER": "person@example.net",
+        "SMTP_PASSWORD": "…",
+        "SMTP_FROM": "Your Name <person@example.net>"
+      }
+    }
+  }
+}
+```
+
+`allowTools` and `denyTools` there are the hub's **own** per-server filter, which is not
+the same thing as `*_ALLOW_TOOLS` in `env` — the difference, and the mistake it invites,
+are in the [client guide](https://smtp-mcp.ni-c.de/guide/clients#through-mcp-hub).
+
 ## Tools
 
 Always registered. None of these can put a message on the wire.
@@ -203,6 +239,31 @@ Registered only with `SMTP_ALLOW_SEND=true`. 👤 marks the ones that ask a huma
 | `send_mail` 👤    | Sends a new message.                                                             |
 | `reply_mail` 👤   | Sends a reply that threads under the original, deriving `Re: ` from the subject. |
 | `forward_mail` 👤 | Forwards a message to new recipients, quoting the original verbatim.             |
+
+### Structured output
+
+Every tool declares an `outputSchema` and answers with `structuredContent`
+alongside the text block, so a client can use the result without parsing prose:
+
+```jsonc
+{
+  "sent": true,
+  "already_sent": false,
+  "message_id": "<b1c9…@example.net>",
+  "accepted": ["her@example.net", "him@example.net"],
+  "rejected": [],
+  "bytes": 1284,
+  "sends_remaining_this_hour": 9,
+  "note": "The SMTP server accepted the message. It cannot be recalled.",
+}
+```
+
+`preview_mail` is the one tool that carries `untrusted: true` and
+`source: "smtp"` as fields: a quoted original was written by whoever sent it,
+and anyone in the world can send mail. Its text block keeps the nonce fence —
+the structured half states the same fields so a client is not made to parse it.
+Everything else here reports this server's own configuration or the outcome of
+its own send, where the marker would be a false claim about who wrote it.
 
 ## Not exposed, on purpose
 
@@ -226,11 +287,18 @@ Registered only with `SMTP_ALLOW_SEND=true`. 👤 marks the ones that ask a huma
 - **A confirmation is bound to the exact message**: a SHA-256 fingerprint over the sorted
   recipient list and a digest of the content, so an approval cannot be spent on a wider list or
   on different text.
+- **The dialog shows the message**, not only the envelope: the body, the quoted original and the
+  HTML part, each with its length in characters. Everything else here binds who a message goes
+  to; this is what binds what it says.
 - **Bcc recipients get their own labelled line** in the dialog. A hidden recipient a human does
   not see is the ideal exfiltration channel.
 - **Confirmation text never quotes caller-chosen values into the server's own sentence.**
+- **The same message is not sent twice.** An approval proves that somebody agreed to a message,
+  not that they agreed to it again, so a message the SMTP server accepted is remembered for as
+  long as an approval for it could still be redeemed.
 - **Outgoing HTML is stripped** of scripts, event handlers, remotely loaded images and unsafe URL
-  schemes — and every removal is reported, never silent.
+  schemes — and every removal is reported, never silent. Markup that cannot be cleaned with
+  confidence is **refused** rather than repaired.
 - **A quoted original is passed on unchanged**, with any prompt-injection shapes it matches named
   in the dialog.
 - **Attachments come only from `SMTP_ATTACHMENT_DIR`**, past an extension allowlist, a symlink
@@ -238,6 +306,11 @@ Registered only with `SMTP_ALLOW_SEND=true`. 👤 marks the ones that ask a huma
 - **Every accepted message is recorded** on stderr and optionally in a file. Never the body.
 
 See [SECURITY.md](SECURITY.md) for the reasoning, and for what none of this covers.
+
+## Documentation
+
+The full guide, tool reference and security notes live at
+**[smtp-mcp.ni-c.de](https://smtp-mcp.ni-c.de)** (source in [`docs/`](docs/)).
 
 ## Development
 
@@ -247,13 +320,13 @@ npm test
 npm run build
 ```
 
-There is a throwaway Mailpit sandbox in [`scripts/sandbox/`](scripts/sandbox/README.md). Develop
+There is a throwaway Mailpit sandbox in `test/integration/`. Develop
 against it rather than a real mailbox: this server's job is to put messages on the wire, and a
 test run that goes wrong sends real mail to real people.
 
 ```sh
-docker compose -f scripts/sandbox/docker-compose.yml up -d
-npm run build && node scripts/sandbox/smoke.mjs
+docker compose -f test/integration/compose.yml up -d --wait
+npm run build && npm run test:integration
 ```
 
 ## Releasing
@@ -263,6 +336,13 @@ publishes to npm with provenance through Trusted Publishing, pushes a multi-arch
 with an SBOM, creates the GitHub release from the CHANGELOG section, and submits the version to
 the MCP Registry.
 
+## Contributing
+
+Issues, discussions and pull requests are welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). For vulnerabilities please use
+[private reporting](https://github.com/ni-c/smtp-mcp/security/advisories/new)
+rather than a public issue; the policy is in [SECURITY.md](SECURITY.md).
+
 ## License
 
-MIT © Willi Thiel
+[MIT](LICENSE) © Willi Thiel

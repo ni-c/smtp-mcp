@@ -104,6 +104,17 @@ hide it when quoting a reply.
 stderr; the file is what makes the record outlive the terminal the client was started in. It
 holds the recipients, the subject, the Message-ID and the size — never the body.
 
+## Turning the approval dialog off
+
+Every send asks a person through MCP elicitation before the message leaves.
+`ELICITATION=false` takes it to the two-call token instead. It does not remove the guard;
+there is no setting in which a message goes out unannounced.
+
+The variable deliberately carries no `SMTP_` prefix, which means it reaches every MCP server
+in the same environment — and this is the server where that costs the most. Unlike
+`SMTP_ALLOW_SEND`, a value it does not recognise **stops the server** rather than failing off.
+See [Asking a person](/guide/approval).
+
 ## Choosing the tools that load
 
 `SMTP_ALLOW_TOOLS` decides what is registered; `SMTP_DENY_TOOLS` is subtracted from it. Both take

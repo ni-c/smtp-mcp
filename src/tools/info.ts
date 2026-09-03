@@ -1,14 +1,6 @@
 import { createHash } from 'node:crypto';
-
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-
-import { sanitizeText } from '../analyze.js';
-import { allowedExtensions } from '../attachments.js';
-import { missingConfigKeys } from '../config.js';
-import { prepareMessage, type PreparedMessage } from '../prepare.js';
-import { describeAllowlist, isAllowed } from '../recipients.js';
-import { fencedUntrustedResult, jsonResult, run } from '../result.js';
 import {
   addressParam,
   attachmentsParam,
@@ -22,6 +14,15 @@ import {
   subjectParam,
   toParam,
 } from '../schema.js';
+
+import { sanitizeText } from '../analyze.js';
+import { READ_ONLY } from './annotations.js';
+import { allowedExtensions } from '../attachments.js';
+import { missingConfigKeys } from '../config.js';
+import { prepareMessage, type PreparedMessage } from '../prepare.js';
+import { describeAllowlist, isAllowed } from '../recipients.js';
+import { fencedUntrustedResult, jsonResult, run } from '../result.js';
+import { untrustedFields } from '../output-schema.js';
 import { ALL_TOOLS, INFO_TOOLS } from './catalogue.js';
 import type { ToolContext } from './context.js';
 
@@ -78,8 +79,51 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         'is allowed to write to, the current limits and whether sending is ' +
         'switched on at all. Call this first: it answers "can I send, and to ' +
         'whom" without touching the network.',
-      inputSchema: {},
-      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}),
+      annotations: READ_ONLY,
+      // No untrusted marker anywhere in this file's first, second and fourth
+      // tool: every field below is this server's own configuration, read from
+      // its own environment. preview_mail is the exception, and carries it.
+      outputSchema: z.object({
+        can_send: z
+          .boolean()
+          .describe('The load-bearing fact: both switched on and configured.'),
+        sending_enabled: z.boolean(),
+        sending_gate: z.string(),
+        configured: z.boolean(),
+        missing_environment_variables: z.array(z.string()),
+        smtp: z.object({
+          host: z.string().describe('Null when SMTP_HOST is unset.').nullable(),
+          port: z.number().int(),
+          tls: z.string(),
+          insecure_tls: z.boolean(),
+        }),
+        from: z
+          .string()
+          .describe('The one address this can send as.')
+          .nullable(),
+        from_is_fixed: z.literal(true),
+        allowed_recipients: z.string(),
+        limits: z.object({
+          max_recipients_per_message: z.number().int(),
+          max_sends_per_hour: z.number().int(),
+          sends_remaining_this_hour: z.number().int(),
+          max_message_bytes: z.number().int(),
+          max_attachment_bytes: z.number().int(),
+        }),
+        attachments: z.object({
+          enabled: z.boolean(),
+          gate: z.string(),
+          allowed_extensions: z.array(z.string()),
+        }),
+        signature_configured: z.boolean(),
+        audit_log_configured: z.boolean(),
+        tools_registered: z.array(z.string()),
+        elicitation_enabled: z.boolean(),
+        confirmation: z
+          .string()
+          .describe('Whether a person is asked, or a token the model redeems.'),
+      }),
     },
     () =>
       run(async () => {
@@ -119,7 +163,17 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
           signature_configured: config.signature !== undefined,
           audit_log_configured: config.auditLog !== undefined,
           tools_registered: config.allowSend ? [...ALL_TOOLS] : [...INFO_TOOLS],
-          every_send_requires_confirmation: true,
+          // This used to be a constant `every_send_requires_confirmation: true`
+          // and it was not always true. With ELICITATION=false `mcp-approval`
+          // takes the two-call token path, which the model redeems on its own
+          // — nobody is asked. The description tells a model to call this tool
+          // first, so a wrong answer here is a wrong answer about the only
+          // thing standing between it and a message that cannot be recalled.
+          elicitation_enabled: config.elicitation,
+          confirmation: config.elicitation
+            ? 'dialog — a person is asked before every send'
+            : 'two-call token — no person is asked; the model can redeem it ' +
+              'itself (the operator set ELICITATION=false)',
         });
       })
   );
@@ -133,14 +187,25 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         'and why the others are refused. Nothing is sent and no connection is ' +
         'made. Use it before composing a message rather than discovering the ' +
         'refusal afterwards.',
-      inputSchema: {
+      inputSchema: z.object({
         addresses: z
           .array(addressParam)
           .min(1)
           .max(100)
           .describe('The email addresses to check.'),
-      },
-      annotations: { readOnlyHint: true },
+      }),
+      annotations: READ_ONLY,
+      outputSchema: z.object({
+        allowlist: z.string(),
+        allowlist_variable: z.literal('SMTP_ALLOWED_RECIPIENTS'),
+        max_recipients_per_message: z.number().int(),
+        allowed_count: z.number().int(),
+        refused_count: z.number().int(),
+        results: z.array(
+          z.object({ address: z.string(), allowed: z.boolean() })
+        ),
+        note: z.string().optional(),
+      }),
     },
     ({ addresses }) =>
       run(async () => {
@@ -178,7 +243,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         'whether a message is acceptable before asking a human to approve it. ' +
         'Attachment payloads are summarised by name, size and digest rather ' +
         'than printed.',
-      inputSchema: {
+      inputSchema: z.object({
         to: toParam,
         cc: ccParam,
         bcc: bccParam,
@@ -189,8 +254,40 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         in_reply_to: messageIdParam.optional(),
         references: referencesParam,
         attachments: attachmentsParam,
-      },
-      annotations: { readOnlyHint: true },
+      }),
+      annotations: READ_ONLY,
+      // The only tool here that carries the marker: a quoted original was
+      // written by whoever sent it, and anyone in the world can send mail.
+      outputSchema: z.object({
+        ...untrustedFields,
+        from: z
+          .string()
+          .describe('The envelope sender, null when it was not recorded.')
+          .nullable(),
+        recipient_count: z.number().int(),
+        bcc_count: z
+          .number()
+          .int()
+          .describe('Invisible to the other recipients.'),
+        bytes: z.number().int(),
+        html_removed: z
+          .array(z.string())
+          .describe('What the HTML sanitiser took out.'),
+        suspicious: z
+          .array(z.string())
+          .describe('Prompt-injection shapes matched in the quoted original.'),
+        headers: z.string().describe('The composed header block, verbatim.'),
+        text_body: z.string(),
+        html_body: z.string().optional().describe('After sanitising.'),
+        attachments: z.array(
+          z.object({
+            filename: z.string(),
+            content_type: z.string(),
+            bytes: z.number().int(),
+            sha256: z.string().describe('First 16 hex characters.'),
+          })
+        ),
+      }),
     },
     (args) =>
       run(async () => {
@@ -208,7 +305,29 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         return fencedUntrustedResult(
           header,
           renderPreview(prepared, prepared.composed.htmlBody),
-          prepared.suspiciousQuote
+          prepared.suspiciousQuote,
+          {
+            from: config.smtp.from ?? null,
+            recipient_count: prepared.composed.envelope.to.length,
+            bcc_count: prepared.bcc.length,
+            bytes: prepared.composed.bytes,
+            html_removed: prepared.composed.htmlRemoved,
+            suspicious: prepared.suspiciousQuote,
+            headers: headerBlockOf(prepared.composed.raw),
+            text_body: sanitizeText(prepared.composed.textBody),
+            ...(prepared.composed.htmlBody === undefined
+              ? {}
+              : { html_body: sanitizeText(prepared.composed.htmlBody) }),
+            attachments: prepared.attachments.map((attachment) => ({
+              filename: attachment.filename,
+              content_type: attachment.contentType,
+              bytes: attachment.bytes,
+              sha256: createHash('sha256')
+                .update(attachment.content)
+                .digest('hex')
+                .slice(0, 16),
+            })),
+          }
         );
       })
   );
@@ -221,9 +340,17 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         'Opens a connection to the SMTP server, negotiates TLS and ' +
         'authenticates, then closes it again. No message is sent. Use it to ' +
         'tell a configuration problem apart from a delivery problem.',
-      inputSchema: {},
+      inputSchema: z.object({}),
       // Nothing changes on the far side: this opens a session and closes it.
-      annotations: { readOnlyHint: true },
+      annotations: READ_ONLY,
+      outputSchema: z.object({
+        reachable: z.literal(true),
+        host: z.string().describe('Null when SMTP_HOST is unset.').nullable(),
+        port: z.number().int(),
+        tls: z.string(),
+        authenticated: z.literal(true),
+        note: z.string(),
+      }),
     },
     () =>
       run(async () => {

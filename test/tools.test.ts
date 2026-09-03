@@ -33,13 +33,41 @@ describe('get_server_info', () => {
     const info = jsonOf(await call(harness.client, 'get_server_info')) as {
       allowed_recipients: string;
       limits: Record<string, number>;
-      every_send_requires_confirmation: boolean;
     };
     expect(info.allowed_recipients).toBe('@example.net, partner@example.org');
     expect(info.limits.max_recipients_per_message).toBe(10);
     expect(info.limits.sends_remaining_this_hour).toBe(20);
-    expect(info.every_send_requires_confirmation).toBe(true);
     await harness.close();
+  });
+
+  it('says how a send is confirmed, and follows the configuration', async () => {
+    // The field this replaces was the constant `true`, which was a lie with
+    // ELICITATION=false: the fallback is a token the model redeems itself.
+    // A model is told to call this tool first, so this is the answer it gets
+    // about the only thing between it and an irrecoverable message.
+    const asking = await connect({
+      config: { allowSend: true, elicitation: true },
+    });
+    const withDialog = jsonOf(await call(asking.client, 'get_server_info')) as {
+      elicitation_enabled: boolean;
+      confirmation: string;
+    };
+    expect(withDialog.elicitation_enabled).toBe(true);
+    expect(withDialog.confirmation).toMatch(/dialog/);
+    expect(withDialog.confirmation).toMatch(/a person is asked/);
+    await asking.close();
+
+    const silent = await connect({
+      config: { allowSend: true, elicitation: false },
+    });
+    const withToken = jsonOf(await call(silent.client, 'get_server_info')) as {
+      elicitation_enabled: boolean;
+      confirmation: string;
+    };
+    expect(withToken.elicitation_enabled).toBe(false);
+    expect(withToken.confirmation).toMatch(/no person is asked/);
+    expect(withToken.confirmation).toMatch(/ELICITATION=false/);
+    await silent.close();
   });
 
   it('never reveals the credentials', async () => {

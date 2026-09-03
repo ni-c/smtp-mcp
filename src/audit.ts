@@ -48,16 +48,39 @@ export function audit(
   }
 }
 
-/** Long recipient lists are abbreviated so one bulk call cannot flood the log. */
+/**
+ * One field value, quoted so it cannot be read as more than one field.
+ *
+ * Quoting used to be conditional on the value containing whitespace, and that
+ * condition was the bug. A subject with no space in it went out bare, so
+ * `Invoice_bcc=[quiet@evil.example]_accepted=1` produced a line reading
+ * `… subject=Invoice_bcc=[quiet@evil.example]_accepted=1 message_id=<…>` — and
+ * anything splitting on `key=` reads a `bcc` that never existed. The caller
+ * chooses the subject and the attachment names; this file is the record of what
+ * a hijacked session actually sent, so the one thing it must not do is let the
+ * attacker write it. Array elements were never quoted at all, and
+ * `assertPlainFilename` permits both commas and spaces in an attachment name.
+ *
+ * Numbers and booleans stay bare: they cannot contain a separator, and a JSON
+ * string always begins with a quote, so the two are never ambiguous.
+ *
+ * Long recipient lists are still abbreviated, so one bulk call cannot flood it.
+ */
 function format(value: unknown): string {
   if (Array.isArray(value)) {
-    return value.length > 20
-      ? `[${value.slice(0, 20).join(',')},…+${value.length - 20}]`
-      : `[${value.join(',')}]`;
+    const entries = value.map((entry: unknown) => quote(entry));
+    return entries.length > 20
+      ? `[${entries.slice(0, 20).join(',')},…+${entries.length - 20}]`
+      : `[${entries.join(',')}]`;
   }
-  // Quoted because a subject contains spaces, which would otherwise run into
-  // the next key=value pair and make the line unparseable. The schema already
-  // refuses CR and LF, so this cannot produce a second log line.
-  const text = String(value);
-  return /\s/.test(text) ? JSON.stringify(text) : text;
+  return quote(value);
+}
+
+function quote(value: unknown): string {
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  // The schema already refuses CR and LF, so this cannot produce a second log
+  // line; JSON.stringify escapes them anyway if it ever gets one.
+  return JSON.stringify(String(value));
 }

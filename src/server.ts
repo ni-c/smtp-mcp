@@ -1,12 +1,14 @@
 import { createRequire } from 'node:module';
-
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer } from '@modelcontextprotocol/server';
 
 import type { Config } from './config.js';
-import { ConfirmationStore } from './confirm.js';
+import { ConfirmationStore, createApproval } from 'mcp-approval';
 import { RateLimiter } from './ratelimit.js';
+import { SentRegistry } from './sent.js';
 import { SmtpClient, type SmtpClientFactory } from './smtp.js';
-import { buildToolFilter, installToolFilter } from './tool-filter.js';
+import { buildToolFilter, installToolFilter } from 'mcp-tool-allowlist';
+
+import { ALL_TOOLS, ESSENTIAL_TOOLS, INFO_TOOLS } from './tools/catalogue.js';
 import { registerInfoTools } from './tools/info.js';
 import { registerSendTools } from './tools/send.js';
 
@@ -51,7 +53,29 @@ export interface ServerDeps {
 export function createServer(config: Config, deps: ServerDeps = {}): McpServer {
   // Before anything is built: an unusable tool list should fail on the way in,
   // not leave a server running with tools quietly missing.
-  const filter = buildToolFilter(config);
+  const filter = buildToolFilter({
+    allowTools: config.allowTools,
+    denyTools: config.denyTools,
+    catalogue: {
+      all: ALL_TOOLS,
+      essential: ESSENTIAL_TOOLS,
+      ungated: INFO_TOOLS,
+    },
+    names: {
+      allow: 'SMTP_ALLOW_TOOLS',
+      deny: 'SMTP_DENY_TOOLS',
+      server: 'smtp-mcp',
+    },
+    // The gate here is a send switch rather than a read-only one, which is the
+    // whole reason `gate` is a parameter: the shape is identical — a subset that
+    // is not registered but stays in the catalogue, so a name from that half is
+    // answered with "suppressed" and never with "no such tool".
+    gate: {
+      closed: !config.allowSend,
+      variable: 'SMTP_ALLOW_SEND',
+      noun: 'the send gate',
+    },
+  });
 
   const client =
     deps.smtpFactory === undefined
@@ -63,6 +87,15 @@ export function createServer(config: Config, deps: ServerDeps = {}): McpServer {
     client,
     config,
     limiter: new RateLimiter(config.maxSendsPerHour),
+    // One per server, like the limiter: a stdio server is spawned per session,
+    // so the process is the flow whose sends have to be at-most-once.
+    sent: new SentRegistry(),
+    // One approver per server: it holds the key that seals the request state
+    // carried out through the client and back.
+    approval: createApproval({
+      server: 'smtp-mcp',
+      elicitation: config.elicitation,
+    }),
     version,
   };
 

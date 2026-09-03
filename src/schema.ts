@@ -110,6 +110,20 @@ export const subjectParam = z
   .string()
   .max(255)
   .refine((v) => !LINE_BREAKS.test(v), 'must not contain line breaks')
+  // An RFC 2047 encoded-word is pure ASCII on the way out and something else
+  // entirely on the way in. `=?utf-8?B?UGF5bWVudCBkZXRhaWxzIGNoYW5nZWQ…?=`
+  // shows the human that string, goes on the wire unchanged — MailComposer sees
+  // no non-ASCII and leaves it alone — and arrives as "Payment details changed
+  // - new IBAN below". The subject is one of only two caller values a person
+  // sees before a message leaves, and it must be the one that arrives. Nothing
+  // is lost by refusing: a model has no reason to encode a subject itself, and
+  // real non-ASCII is encoded correctly during composition.
+  .refine(
+    (v) => !/=\?[^?]{1,40}\?[BbQq]\?/.test(v),
+    'must not contain an RFC 2047 encoded-word such as "=?utf-8?B?…?=" — ' +
+      'write the subject as plain text, including any non-ASCII characters; ' +
+      'they are encoded correctly on the way out'
+  )
   .describe('Subject line. Must fit on one line.');
 
 export const bodyParam = z
@@ -123,8 +137,10 @@ export const htmlParam = z
   .optional()
   .describe(
     'Optional HTML body, sent as multipart/alternative alongside the plain ' +
-      'text. Scripts, event handlers, remotely loaded images and unsafe URL ' +
-      'schemes are removed; preview_mail reports exactly what was removed.'
+      'text. Scripts, event handlers, remotely loaded images (src, srcset, ' +
+      'poster, background) and unsafe URL schemes are removed; preview_mail ' +
+      'reports exactly what was removed. Markup that cannot be cleaned with ' +
+      'confidence is refused rather than sent.'
   );
 
 /**
