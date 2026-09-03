@@ -1,6 +1,6 @@
 {
   "name": "@ni-c/smtp-mcp",
-  "version": "0.1.0",
+  "version": "0.1.0-rc.1",
   "mcpName": "io.github.ni-c/smtp-mcp",
   "description": "MCP server that sends mail over SMTP, gated behind an allowlist and a human confirmation",
   "keywords": [
