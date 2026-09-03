@@ -191,11 +191,22 @@ describe('markup that cannot be cleaned', () => {
 
 describe('the preview', () => {
   it('shows what would be sent, and sends nothing', async () => {
-    const preview = await asking.call('preview_mail', MAIL);
+    const result = await asking.raw('preview_mail', MAIL);
+    const preview = (result.content ?? [])
+      .map((part) => part.text ?? '')
+      .join('');
     expect(preview).toContain('From: Sandbox');
     expect(preview).toContain('X-Mailer: smtp-mcp/');
-    // The sanitiser's work, visible before anything is committed.
-    expect(preview).toContain('<script> element');
+    // The sanitiser's work, visible before anything is committed — as data.
+    // It names the scheme the caller wrote before a colon, so it belongs in a
+    // field rather than in the server's own header, which sits outside the
+    // untrusted fence.
+    expect(preview).toMatch(/thing\(s\) were removed from the HTML part/);
+    expect(result.structuredContent).toMatchObject({
+      html_removed: expect.arrayContaining([
+        expect.stringContaining('<script> element'),
+      ]),
+    });
     // The Bcc is not in the header block: that is the whole point of a Bcc,
     // and a preview that leaked it would teach the wrong thing.
     expect(preview.split('--- text/plain ---')[0]).not.toContain(

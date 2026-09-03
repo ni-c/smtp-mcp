@@ -122,6 +122,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The passes are linear rather than merely bounded, and the HTML input is capped, so
   `preview_mail` — which is reachable with no send gate, no confirmation and no rate limit —
   cannot hold the event loop.
+- **Every recipient and every attachment gets a line of its own in the dialog**, numbered
+  `i/N`. A detail value is cut at 200 characters and six ordinary addresses already exceed
+  that, so a single line per field showed the first few and dropped the rest without saying
+  so — and the one that goes missing is the one that matters, because an address appended to
+  Bcc is invisible in the delivered message too.
+- **A declined dialog costs a slot of `SMTP_MAX_SENDS_PER_HOUR`.** The quota is not only a
+  cap on messages sent; it is the only bound on how many times a person can be asked, and a
+  free decline is an unlimited supply of dialogs — the same message reworded until somebody
+  agrees out of tiredness. A token that does not match gives the slot back, because nobody
+  decided anything and the alternative would let a caller burn the hour with invented tokens.
+- **`preview_mail` answers inside the same result budget as every other tool.** It is the one
+  tool that returns a whole message and the one reachable with no send gate, no confirmation
+  and no rate limit, and it had no budget at all: a 64 kB HTML part with a distinct unsafe
+  URL scheme per link produced 366 kB across the two channels. The list of removals is capped
+  and says how many are not named, and it is reported as data rather than in the server's own
+  voice — a scheme is whatever the caller wrote before a colon, and that text used to sit
+  outside the untrusted fence.
 - **The confirmation dialog cannot be forged from its own contents.** Recipients, subject, Bcc
   and body each stand on their own labelled line rather than inside a sentence the server wrote,
   and the line-breaking codepoints that would fake such a line under `white-space: pre-wrap`
@@ -146,6 +163,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   composed bytes, which carry a `Date` and a random Message-ID; the To/Cc/Bcc _split_ rather than
   the multiset of addresses, so an approved visible recipient cannot be moved into Bcc afterwards;
   and the attachment bytes, so the file cannot be swapped between the two token calls.
+- Both credentials are removed from `process.env` once the configuration is read, not just
+  the password: a user name is half a credential and, for most providers, the mailbox address.
+  An upstream error that is an HTML page is dropped however it is prefixed — nodemailer
+  appends the server's response to its own message, so a captive portal on the submission port
+  arrives as `Invalid login: <html>…` rather than as markup at position zero. `test_connection`
+  closes the session it opens instead of leaving an authenticated connection pooled for the
+  lifetime of the process.
 - A Message-ID, `in_reply_to` or `references` entry is printable ASCII without whitespace or
   angle brackets. nodemailer writes these three headers byte for byte, so a non-ASCII character
   was an 8-bit header on the wire and U+2028 quietly split one identifier into two.
