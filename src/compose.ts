@@ -25,6 +25,27 @@ export interface MessageInput {
   messageId?: string | undefined;
 }
 
+/** How many distinct removals are named before the rest is counted instead. */
+const MAX_REMOVALS_SHOWN = 20;
+
+/**
+ * The removal list, bounded.
+ *
+ * Each entry names the scheme the caller wrote before a colon, so the number of
+ * entries is chosen by whoever wrote the HTML: 4260 distinct schemes in a 64 kB
+ * part produced 4260 entries, which then travelled twice — once in the text
+ * block and once in `structuredContent`. The individual entry was already
+ * capped; the count was not, and a per-item cap without a total is only half a
+ * budget. What is dropped is said rather than left out.
+ */
+function summariseRemovals(removed: readonly string[]): string[] {
+  if (removed.length <= MAX_REMOVALS_SHOWN) return [...removed];
+  return [
+    ...removed.slice(0, MAX_REMOVALS_SHOWN),
+    `… and ${removed.length - MAX_REMOVALS_SHOWN} further removals not listed`,
+  ];
+}
+
 export interface ComposedMessage {
   /** The complete RFC 5322 message, exactly as it will be handed to the server. */
   raw: Buffer;
@@ -175,7 +196,7 @@ export async function composeMessage(
   let html: string | undefined;
   if (input.html !== undefined && input.html !== '') {
     const sanitized = sanitizeHtml(input.html);
-    htmlRemoved = sanitized.removed;
+    htmlRemoved = summariseRemovals(sanitized.removed);
     html = buildHtmlBody(input, config, sanitized.html);
   }
 

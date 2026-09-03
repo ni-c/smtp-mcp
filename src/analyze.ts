@@ -147,8 +147,18 @@ export function defuseAutoFetch(text: string): string {
  * Never applied to an outgoing body. See {@link defuseAutoFetch}.
  */
 export function sanitizeText(input: string, maxChars = MAX_BODY_CHARS): string {
-  const normalized = defuseAutoFetch(stripInvisible(input.normalize('NFKC')));
-  return normalized.length > maxChars
+  // Cut before folding, not after. NFKC, the invisible-character strip and the
+  // auto-fetch defusing each walk the whole string, and everything past
+  // `maxChars` is then thrown away — so a body at the schema's 500 000
+  // character ceiling paid for 450 000 characters of work nobody would ever
+  // read, in `preview_mail`, which has no send gate, no confirmation and no
+  // rate limit in front of it. Twice the cap is headroom that cannot
+  // under-fill: NFKC and the defusing both lengthen text (`ﬁ` becomes `fi`,
+  // `![x]` becomes a sentence) and neither shortens it.
+  const cut = input.length > maxChars * 2;
+  const source = cut ? input.slice(0, maxChars * 2) : input;
+  const normalized = defuseAutoFetch(stripInvisible(source.normalize('NFKC')));
+  return cut || normalized.length > maxChars
     ? `${normalized.slice(0, maxChars)}\n… (truncated at ${maxChars} characters)`
     : normalized;
 }

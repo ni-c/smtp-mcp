@@ -313,9 +313,17 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
           `This message would be sent from ${config.smtp.from ?? '(unset)'} ` +
           `to ${prepared.composed.envelope.to.length} recipient(s), ` +
           `${prepared.composed.bytes} bytes. Nothing has been sent.` +
+          // The count, not the list. Each entry names the scheme the caller
+          // wrote before a colon, and this header sits *outside* the fence,
+          // under a preamble telling the reader that everything outside it
+          // came from this server. `send_mail` gets the same list right, as a
+          // capped detail; here it was server voice carrying caller text. The
+          // entries themselves are in `html_removed`, which is data.
           (prepared.composed.htmlRemoved.length === 0
             ? ''
-            : `\nRemoved from the HTML part: ${prepared.composed.htmlRemoved.join(', ')}.`) +
+            : `\n${prepared.composed.htmlRemoved.length} thing(s) were removed ` +
+              'from the HTML part; they are listed in html_removed, which is ' +
+              'caller-supplied text like the message itself.') +
           (prepared.bcc.length === 0
             ? ''
             : `\nBcc recipients (invisible to the others): ${prepared.bcc.length}.`);
