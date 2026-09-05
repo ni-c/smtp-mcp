@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      last in the file so the link definitions come along. -->
 <!-- #region changelog -->
 
+## [0.1.1] - 2026-09-06
+
+### Fixed
+
+- `preview_mail` no longer describes itself as building "exactly the message `send_mail`
+  would build". It is registered whether or not sending is switched on, so with
+  `SMTP_ALLOW_SEND` unset it was pointing at a tool absent from the same `tools/list` —
+  and a reader holding a reference to a tool that is not there reads the gap as a broken
+  server rather than as the default it is. The description now stands on its own, says
+  that the sending tools register only when `SMTP_ALLOW_SEND` is true, and points at
+  `get_server_info` for whether sending is on. No behaviour changes, and the default
+  stays off.
+
 ## [0.1.0] - 2026-09-03
 
 ### Added

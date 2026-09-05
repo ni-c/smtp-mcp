@@ -239,14 +239,21 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
     'preview_mail',
     {
       title: 'Render a message without sending it',
+      // This tool is registered whether or not sending is switched on, so its
+      // description may not name a sending tool as though it were present: with
+      // SMTP_ALLOW_SEND unset they are absent from tools/list, and a reader left
+      // holding a reference to a tool that is not there reads the gap as a
+      // defect rather than as the default it is.
       description:
-        'Builds exactly the message send_mail would build and returns its ' +
+        'Builds exactly the message a send would build and returns its ' +
         'headers and bodies, without connecting to anything. Every check a ' +
         'send performs runs here too — the allowlist, the recipient limit, the ' +
         'attachment policy and the size limit — so this is the way to find out ' +
         'whether a message is acceptable before asking a human to approve it. ' +
-        'Attachment payloads are summarised by name, size and digest rather ' +
-        'than printed.',
+        'The sending tools register only when SMTP_ALLOW_SEND is true and may ' +
+        'therefore be absent even where this preview succeeds; get_server_info ' +
+        'reports whether sending is on. Attachment payloads are summarised by ' +
+        'name, size and digest rather than printed.',
       inputSchema: z.object({
         to: toParam,
         cc: ccParam,
