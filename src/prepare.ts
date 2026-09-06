@@ -297,9 +297,9 @@ export function messageFingerprint(
   // the first hides a recipient the human saw, the second exposes one they were
   // told was hidden.
   return [
-    `to:${[...args.to].sort().join(',')}`,
-    `cc:${[...(args.cc ?? [])].sort().join(',')}`,
-    `bcc:${[...(args.bcc ?? [])].sort().join(',')}`,
+    `to:${args.to.toSorted().join(',')}`,
+    `cc:${(args.cc ?? []).toSorted().join(',')}`,
+    `bcc:${(args.bcc ?? []).toSorted().join(',')}`,
     `content:${digest}`,
   ];
 }

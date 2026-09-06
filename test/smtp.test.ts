@@ -43,11 +43,12 @@ describe('SmtpClient', () => {
 
   it('creates the transport lazily, so the server starts without credentials', () => {
     let created = 0;
-    new SmtpClient(testConfig(), () => {
+    const client = new SmtpClient(testConfig(), () => {
       created += 1;
       return new FakeSmtp();
     });
     expect(created).toBe(0);
+    client.close();
   });
 
   it('reports a partial delivery rather than calling it a success', async () => {
@@ -106,24 +107,24 @@ describe('SmtpClient', () => {
   });
 });
 
-describe('transportOptions', () => {
-  const smtp = (overrides: Record<string, unknown> = {}) => ({
-    ...testConfig().smtp,
-    ...overrides,
-  });
+const smtpConfig = (overrides: Record<string, unknown> = {}) => ({
+  ...testConfig().smtp,
+  ...overrides,
+});
 
+describe('transportOptions', () => {
   it('requires STARTTLS rather than upgrading opportunistically', () => {
     // Left to nodemailer's default, STARTTLS is attempted when offered and
     // skipped when not — so stripping the capability from EHLO yields a
     // cleartext session silently. requireTLS makes that a failed connection.
-    const options = transportOptions(smtp({ tls: 'starttls' }));
+    const options = transportOptions(smtpConfig({ tls: 'starttls' }));
     expect(options.secure).toBe(false);
     expect(options.requireTLS).toBe(true);
     expect(options.ignoreTLS).toBe(false);
   });
 
   it('uses implicit TLS without asking for an upgrade', () => {
-    const options = transportOptions(smtp({ tls: 'implicit' }));
+    const options = transportOptions(smtpConfig({ tls: 'implicit' }));
     expect(options.secure).toBe(true);
     expect(options.requireTLS).toBe(false);
   });
@@ -131,20 +132,20 @@ describe('transportOptions', () => {
   it('means none when it says none', () => {
     // A mode whose behaviour depends on what the peer offers is a mode nobody
     // can reason about.
-    const options = transportOptions(smtp({ tls: 'none' }));
+    const options = transportOptions(smtpConfig({ tls: 'none' }));
     expect(options.secure).toBe(false);
     expect(options.ignoreTLS).toBe(true);
   });
 
   it('never disables certificate checking unless asked', () => {
-    expect(transportOptions(smtp()).tls).toBeUndefined();
-    expect(transportOptions(smtp({ insecureTls: true })).tls).toEqual({
+    expect(transportOptions(smtpConfig()).tls).toBeUndefined();
+    expect(transportOptions(smtpConfig({ insecureTls: true })).tls).toEqual({
       rejectUnauthorized: false,
     });
   });
 
   it('keeps the SMTP dialogue off stdout, which the protocol owns', () => {
-    const options = transportOptions(smtp());
+    const options = transportOptions(smtpConfig());
     expect(options.logger).toBe(false);
     expect(options.debug).toBe(false);
   });
@@ -152,14 +153,14 @@ describe('transportOptions', () => {
   it('greets with the sender domain, not the machine hostname', () => {
     // The EHLO name travels in a Received header on every message sent, so the
     // default would publish an internal hostname to every recipient.
-    expect(transportOptions(smtp()).name).toBe('example.net');
-    expect(transportOptions(smtp({ fromAddress: undefined })).name).toBe(
+    expect(transportOptions(smtpConfig()).name).toBe('example.net');
+    expect(transportOptions(smtpConfig({ fromAddress: undefined })).name).toBe(
       'localhost'
     );
   });
 
   it('bounds every phase of the connection', () => {
-    const options = transportOptions(smtp());
+    const options = transportOptions(smtpConfig());
     expect(options.connectionTimeout).toBeGreaterThan(0);
     expect(options.greetingTimeout).toBeGreaterThan(0);
     expect(options.socketTimeout).toBeGreaterThan(0);
@@ -167,12 +168,13 @@ describe('transportOptions', () => {
 
   it('omits auth entirely when there are no credentials', () => {
     expect(
-      transportOptions(smtp({ user: undefined, password: undefined })).auth
+      transportOptions(smtpConfig({ user: undefined, password: undefined }))
+        .auth
     ).toBeUndefined();
   });
 
   it('builds a usable connection object without opening a socket', () => {
-    const connection = createSmtpConnection(smtp());
+    const connection = createSmtpConnection(smtpConfig());
     expect(typeof connection.verify).toBe('function');
     expect(typeof connection.send).toBe('function');
     connection.close();

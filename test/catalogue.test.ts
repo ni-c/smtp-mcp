@@ -18,13 +18,13 @@ import { expectPortableToolSchemas } from 'mcp-integration-harness';
 describe('the catalogue matches the server', () => {
   it('registers exactly the info tools when sending is off', async () => {
     const harness = await connect({ config: { allowSend: false } });
-    expect(await toolNames(harness.client)).toEqual([...INFO_TOOLS].sort());
+    expect(await toolNames(harness.client)).toEqual(INFO_TOOLS.toSorted());
     await harness.close();
   });
 
   it('registers exactly the full catalogue when sending is on', async () => {
     const harness = await connect({ config: { allowSend: true } });
-    expect(await toolNames(harness.client)).toEqual([...ALL_TOOLS].sort());
+    expect(await toolNames(harness.client)).toEqual(ALL_TOOLS.toSorted());
     await harness.close();
   });
 

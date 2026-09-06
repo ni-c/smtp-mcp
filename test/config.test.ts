@@ -286,8 +286,7 @@ describe('the default attachment types', () => {
     expect(DEFAULT_ATTACHMENT_TYPES).toContain('application/pdf');
   });
 
-  it('can be widened back by the operator, in writing', async () => {
-    const { loadConfig } = await import('../src/config.js');
+  it('can be widened back by the operator, in writing', () => {
     const config = loadConfig({
       SMTP_ATTACHMENT_TYPES: 'application/pdf, text/html',
     } as NodeJS.ProcessEnv);
