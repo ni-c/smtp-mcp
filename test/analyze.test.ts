@@ -33,7 +33,7 @@ describe('detectSuspicious', () => {
   it('says nothing about ordinary correspondence', () => {
     expect(
       detectSuspicious(
-        'Hi Anna, here is the quarterly report you asked for. Best, Willi'
+        'Hi Anna, here is the quarterly report you asked for. Best, Alex'
       )
     ).toEqual([]);
   });

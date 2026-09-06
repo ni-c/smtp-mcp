@@ -13,7 +13,7 @@ export interface SmtpConfig {
   insecureTls: boolean;
   /**
    * The From header, in whatever display form the operator configured:
-   * `willi@example.net` or `Willi Thiel <willi@example.net>`.
+   * `me@example.net` or `Me <me@example.net>`.
    *
    * There is no `from` tool parameter anywhere in this server. A model that can
    * choose its own sender can write in a colleague's name, and the resulting
