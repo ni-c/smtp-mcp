@@ -697,6 +697,27 @@ describe('what a preview costs', () => {
     expect(textOf(result)).toMatch(/Nothing was composed/);
     await harness.close();
   });
+
+  it('runs the injection detector on the largest body and quote promptly', async () => {
+    // The detector runs on the body, the quote and the HTML part of every
+    // preview. One of its patterns was quadratic in a run of dashes, and a run
+    // is exactly what a signature separator or a Markdown rule looks like:
+    // 500 000 of them — the schema ceiling — took minutes, twice over, for a
+    // tool that needs no send gate, no confirmation and no rate limit.
+    const harness = await connect();
+    const run = '-'.repeat(500_000);
+    const started = process.hrtime.bigint();
+    const result = await call(harness.client, 'preview_mail', {
+      to: ['anna@example.net'],
+      subject: 'rules',
+      body: run,
+      quote: '='.repeat(500_000),
+    });
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    expect(result.isError).not.toBe(true);
+    expect(ms).toBeLessThan(3000);
+    await harness.close();
+  });
 });
 
 describe('moving a recipient after approval', () => {

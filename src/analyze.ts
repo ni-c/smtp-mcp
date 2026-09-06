@@ -54,7 +54,14 @@ const INJECTION_PATTERNS: ReadonlyArray<readonly [string, RegExp]> = [
   ],
   [
     'fake-delimiter',
-    /(-{3,}|={3,}|#{3,})\s*(begin|end|system|instruction|prompt)/i,
+    // The lookbehind anchors the run to its own first character. Without it
+    // `-{3,}` is tried at every position of a run of dashes and backtracks
+    // through every length at each of them: 100 000 dashes took 9.5 seconds of
+    // blocked event loop, and the schema admits 500 000 — in the body, the
+    // quote and the HTML part each, through preview_mail, which has no send
+    // gate, no confirmation and no rate limit in front of it. Anchored, a run
+    // is examined exactly once, from its start.
+    /(?<![-=#])(-{3,}|={3,}|#{3,})\s*(begin|end|system|instruction|prompt)/i,
   ],
   [
     'tool-coercion',
