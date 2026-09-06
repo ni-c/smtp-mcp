@@ -466,7 +466,7 @@ function repeatOutcome(
     return errorResult(`${textOfResult(outcome)}\n\n(Not retried: ${notice})`);
   }
   return jsonResult({
-    ...outcome.structuredContent,
+    ...(outcome.structuredContent as Record<string, unknown>),
     cached: true,
     note: `${notice} The connection worked then, and no message was sent.`,
   });

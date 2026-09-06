@@ -156,6 +156,12 @@ Links are left alone — they fetch nothing on their own. Nothing is silently re
 candidate of a `srcset` list on its own. A `background` on a `<body>` or a `<table>` is a counter
 just as much as a 1×1 `<img>`: it reports when a message was opened, from where, and how often.
 
+Values are read the way a client reads them: character references decoded to the end of their
+digit run (`&#0000000104;ttps:` is `https:`), whitespace and control characters stripped inside a
+scheme, backslashes read as slashes. And every removal leaves a space behind, so cutting one
+attribute out can never join its neighbours into another — `<img sr onclick="x"c=…>` must not
+become `<img src=…>`. A second run of the passes checks that the first one was complete.
+
 And when markup that must not survive is still there after every pass has run, the message is
 **refused** rather than repaired. A regex is not a parser and the recipient's client is, so the
 two can be made to disagree; for outgoing text the safe direction is to stop. It is also what

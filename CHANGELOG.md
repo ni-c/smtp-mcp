@@ -13,21 +13,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
+## [0.1.2] - 2026-09-06
 
-- The event-loop budget in the sanitiser tests is 3 s rather than 400 ms. The
-  guard is against a pathological pattern that once took fourteen seconds; the
-  sanitiser needs single-digit milliseconds. 400 ms was close enough to the
-  runner's own variance that CI failed twice on a correct sanitiser.
+The third internal security review of this server, run through every code
+path with the MCP review checklist. Two ways past the HTML sanitiser and one
+way to stall the process, all reachable through `preview_mail`, which needs no
+send gate, no confirmation and no rate limit — and a handful of smaller
+findings from the same pass. Every fix ships with a test that fails on 0.1.1.
+
+### Security
+
+- The injection detector was quadratic in a run of dashes, equals signs or
+  hashes. Its `fake-delimiter` pattern tried `-{3,}` at every position of the
+  run and backtracked through every length at each: 100 000 dashes took 9.5 s
+  of blocked event loop, and the schema admits 500 000 in the body, the quote
+  and the HTML part each — minutes per preview, with nothing in front of it.
+  The run is now anchored to its own start, and a timing test pins every
+  heuristic against its own trigger at the schema ceiling.
+- The HTML sanitiser decoded at most seven digits of a numeric character
+  reference; the tokenizer consumes every digit there is. `&#0000000104;ttps://…`
+  was `https://` to the recipient's client and a scheme-less `104;ttps://` to
+  every pass here — a tracking pixel, or a `javascript:` link, with an empty
+  removal list and nothing in the confirmation dialog. Confirmed in Chrome. The
+  digit run is now read in full, decoded once rather than in three passes, and
+  what the tokenizer turns into U+FFFD is U+FFFD here too, never nothing.
+- Every removal in the sanitiser replaced its match with the empty string. To a
+  tokenizer `<img sr onclick="x"c=…>` is three inert attributes; cutting the
+  handler out of the middle left `<img src=…>` — a beacon manufactured by the
+  pass that removes handlers, after the pass that removes beacons had already
+  run, and reported to the person approving as a click handler. Every removal
+  now leaves a space behind, so no deletion can assemble a token out of pieces
+  that were never one, and a second, counted run of the passes refuses the
+  message if it still finds anything.
+- The approval fingerprint fed the attachment bytes to the hash one file after
+  another with no boundary between them, so the same bytes split differently
+  between two files were one digest — and a writer in `SMTP_ATTACHMENT_DIR`
+  could move the tail of one approved file to the head of the next between the
+  two calls of the token path. Each file's bytes are now length-prefixed.
+- An SMTP reply reaching the model was bounded in length and shape but not in
+  what characters it carried; `ESC[2K ESC[1A` erases the line above it. Control
+  characters are stripped from every upstream error text.
+- The `ELICITATION` and `SMTP_ALLOWED_RECIPIENTS` diagnostics repeated whatever
+  was pasted into the variable, at any length and with any control characters
+  in it — and the branch that rejects a value is where a token pasted into the
+  wrong variable arrives. Both cut the value to forty characters and strip the
+  rest.
+- `confirm_token` was the one caller string without a ceiling; it has one. And
+  a refusal for recipients off the allowlist named all of them — up to a
+  hundred and fifty addresses of 320 characters — where it now names the first
+  twenty and counts the rest.
 
 ### Changed
 
+- `test_connection` tries the server at most once every ten seconds. Every
+  call is a login against the operator's own provider, and providers lock an
+  account after a handful of failed logins in quick succession; a model that
+  reads "authentication refused" and retries — the tool calls itself read-only,
+  idempotent and cheap — must not be able to turn one wrong password into a
+  locked mailbox. Inside the window the previous outcome is repeated, success or
+  failure, with `cached: true` and a note saying when the next real attempt is
+  possible.
+- `mcp-approval` 0.8.1: a sealed `requestState` is single-use, spent on its
+  first answer. This server already answered a retry from its own record of
+  what went out; the library now agrees, and SECURITY.md describes the two
+  layers rather than a transport the code stopped using in 0.1.0.
 - The tool reference marks the `essential` preset and the tools that ask a
   person before they act, per tool rather than only in the introduction. A test
   keeps both sets in step with the code.
+- oxlint's `suspicious` category is on. Twelve `sort()` calls that mutated their
+  input became `toSorted()`, which needs target ES2023 — every supported Node
+  has it.
 
 ### Added
 
+- A dependency review on every pull request, against the advisory database:
+  `npm audit` checks the tree as it is, this checks the change.
+- A test that loads `tools/list` before taking every tool down its success
+  path, the way a real client does — a client that knows the output schema
+  validates `structuredContent` against it, and only then.
 - The server introduces itself in full. `title`, `description`, `websiteUrl` and
   `icons` now travel with `name` and `version`, so a client that shows a server
   to a person has something to show. All four were already in `server.json` for
@@ -38,6 +101,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The event-loop budget in the sanitiser tests is 3 s rather than 400 ms. The
+  guard is against a pathological pattern that once took fourteen seconds; the
+  sanitiser needs single-digit milliseconds. 400 ms was close enough to the
+  runner's own variance that CI failed twice on a correct sanitiser.
 - Container CVEs reach the Security tab again. The `container-scan` job ran
   Trivy only as a gate, so a finding existed for exactly as long as someone was
   reading the CI log: nothing was uploaded, no alert was raised, and a fixed CVE

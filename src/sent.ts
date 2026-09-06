@@ -2,12 +2,13 @@
  * What this server has already put on the wire, so it does not do it twice.
  *
  * An approval proves that a person agreed to *this* message. It does not prove
- * that they agreed to it a second time: `mcp-approval` says in its own security
- * policy that the sealed elicitation state binds an answer to the question it
- * was given and stays redeemable until it expires. Everywhere else in this
- * family that is harmless, because the guarded operation is idempotent —
- * deleting an already-deleted note changes nothing. Here a second call reaches
- * a person, and neither copy can be recalled.
+ * that they agreed to it a second time. Since 0.8.1 `mcp-approval` spends a
+ * sealed elicitation state on its first answer, so a resent state is a fresh
+ * question; before that the state stayed redeemable until it expired, and
+ * everywhere else in this family that was harmless, because the guarded
+ * operation is idempotent — deleting an already-deleted note changes nothing.
+ * Here a second call reaches a person, and neither copy can be recalled, so
+ * this server keeps its own record rather than leaning on the library's.
  *
  * The narrower reason matters just as much and does not depend on the protocol
  * revision at all: a tool call is at-least-once by nature. A client that times
