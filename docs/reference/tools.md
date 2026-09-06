@@ -18,6 +18,8 @@ filtered out is not built: it is absent from `tools/list` and a call answers "no
 
 ### `get_server_info`
 
+**essential**
+
 No parameters. Reports the SMTP endpoint, the fixed sender, the allowlist, the limits, how many
 sends remain in the current hour, whether attachments are available, and — first in the payload —
 whether this server can send at all.
@@ -25,6 +27,8 @@ whether this server can send at all.
 Call it before anything else. It answers "can I send, and to whom" without touching the network.
 
 ### `validate_recipients`
+
+**essential**
 
 | Parameter   | Type       | Required | Description                          |
 | ----------- | ---------- | -------- | ------------------------------------ |
@@ -34,6 +38,8 @@ Says which addresses this server may write to and which it will refuse. No conne
 nothing is sent. Use it before composing rather than discovering a refusal afterwards.
 
 ### `preview_mail`
+
+**essential**
 
 Same parameters as [`send_mail`](#send-mail), minus `confirm_token`.
 
@@ -65,6 +71,8 @@ spends no quota.
 
 ### `send_mail`
 
+**essential**
+
 | Parameter       | Type       | Required | Description                                                        |
 | --------------- | ---------- | -------- | ------------------------------------------------------------------ |
 | `to`            | `string[]` | yes      | Primary recipients.                                                 |
@@ -79,6 +87,8 @@ spends no quota.
 There is no `from` parameter. The sender is `SMTP_FROM`.
 
 ### `reply_mail`
+
+**essential**
 
 Everything `send_mail` takes, plus:
 
