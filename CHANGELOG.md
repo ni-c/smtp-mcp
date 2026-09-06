@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- The event-loop budget in the sanitiser tests is 3 s rather than 400 ms. The
+  guard is against a pathological pattern that once took fourteen seconds; the
+  sanitiser needs single-digit milliseconds. 400 ms was close enough to the
+  runner's own variance that CI failed twice on a correct sanitiser.
+
 ### Changed
 
 - The tool reference marks the `essential` preset and the tools that ask a

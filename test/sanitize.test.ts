@@ -488,9 +488,16 @@ describe('malformed markup cannot stall the event loop', () => {
   // The patterns are bounded but were not linear: `<img ` repeated with no `>`
   // made every window run at every position, and a 500 kB body took fourteen
   // seconds of blocked event loop — through preview_mail, which needs no send
-  // gate, no confirmation and no rate limit. The bound is generous enough not
-  // to be flaky on a loaded machine and far below the failure it guards.
-  const BUDGET_MS = 400;
+  // gate, no confirmation and no rate limit.
+  //
+  // The bound is deliberately far above the measurement and far below the
+  // failure it guards: the regression it exists for took fourteen seconds, and
+  // the sanitiser takes single-digit milliseconds here. 400 ms was too close —
+  // a GitHub runner measured 470 and 473 ms on two separate days, so the test
+  // failed twice for a sanitiser that was working correctly. A budget that
+  // reports the load on the machine rather than the complexity of the code is
+  // worse than no budget, because it teaches everyone to re-run the job.
+  const BUDGET_MS = 3000;
 
   const pathological: Array<[string, string]> = [
     ['unclosed img tags', '<img '.repeat(12800)],
