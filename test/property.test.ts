@@ -8,6 +8,7 @@ import {
   parseAllowlist,
   refusedRecipients,
 } from '../src/recipients.js';
+import { decodeReferences, sanitizeHtml } from '../src/sanitize.js';
 
 /**
  * Properties of the recipient allowlist.
@@ -212,6 +213,110 @@ describe('a Message-ID is bracketed exactly once', () => {
         expect(once.endsWith('>')).toBe(true);
         expect(normalizeMessageId(once)).toBe(once);
       }),
+      RUNS
+    );
+  });
+});
+
+describe('a character reference decodes as the tokenizer decodes it', () => {
+  /**
+   * The tokenizer consumes every digit of a numeric reference. A decoder that
+   * stops after a fixed number read seven zeros out of `&#0000000104;` and
+   * left a scheme-less `104;ttps://` behind — which no pass removes. For every
+   * scalar value and every amount of zero padding, the two must agree.
+   */
+  const scalar = fc
+    .integer({ min: 1, max: 0x10ffff })
+    .filter((n) => n < 0xd800 || n > 0xdfff);
+  const padding = fc.integer({ min: 0, max: 24 }).map((n) => '0'.repeat(n));
+
+  it('reads a decimal run of any length', () => {
+    fc.assert(
+      fc.property(scalar, padding, fc.boolean(), (n, zeros, semicolon) => {
+        // A trailing letter would extend a hex run; a decimal one is safe to
+        // follow with any non-digit, which is the tokenizer's rule too.
+        const text = `&#${zeros}${n}${semicolon ? ';' : ''}|`;
+        expect(decodeReferences(text)).toBe(`${String.fromCodePoint(n)}|`);
+      }),
+      RUNS
+    );
+  });
+
+  it('reads a hex run of any length, in either case', () => {
+    fc.assert(
+      fc.property(scalar, padding, fc.boolean(), (n, zeros, upper) => {
+        const digits = n.toString(16);
+        const text = `&#${upper ? 'X' : 'x'}${zeros}${upper ? digits.toUpperCase() : digits};`;
+        expect(decodeReferences(text)).toBe(String.fromCodePoint(n));
+      }),
+      RUNS
+    );
+  });
+});
+
+describe('no removal leaves a remote fetch or a handler in the output', () => {
+  /**
+   * The separator property: removing one attribute must not turn its
+   * neighbours into a different attribute. Every attribute the generator
+   * produces is either kept whole or removed whole, so the output can be read
+   * with the same patterns and must contain no fetching attribute and no
+   * handler — whatever the order, the quoting, or the halves around them.
+   */
+  const remote = fc.constantFrom(
+    'https://tracker.example/p.gif',
+    '//tracker.example/p.gif',
+    '&#0000000104;ttps://tracker.example/p.gif'
+  );
+  const attribute = fc.oneof(
+    fc.constant('alt="x"'),
+    fc.constant('title=t'),
+    fc.constant('sr'),
+    fc.constant('c=https://tracker.example/q.gif'),
+    fc.constant('on'),
+    fc.constant('error="alert(1)"'),
+    remote.map((url) => `src="${url}"`),
+    remote.map((url) => `srcset='${url} 1x'`),
+    fc.constant('onclick="x"'),
+    fc.constant('href="javascript:x"'),
+    fc.constant('style="background:url(x)"')
+  );
+  const separator = fc.constantFrom(' ', '', '/', '\t');
+  /**
+   * An attribute and what follows it. Only a quoted value ends at its quote;
+   * an unquoted one runs on through `/` and `"` alike — `title=thref="…"` is
+   * one attribute called `title` to the tokenizer — so after an unquoted value
+   * the boundary has to be whitespace. The generator is narrowed to what the
+   * tokenizer reads as two attributes rather than the property loosened.
+   */
+  const part = fc
+    .tuple(attribute, separator)
+    .map(([a, s]) => (/["']$/.test(a) || /\s/.test(s) ? a + s : `${a} `));
+
+  it('holds for any run of attributes on an img', () => {
+    fc.assert(
+      fc.property(
+        fc.array(part, {
+          minLength: 1,
+          maxLength: 8,
+        }),
+        (parts) => {
+          const input = `<img ${parts.join('')}>`;
+          let html: string;
+          try {
+            html = sanitizeHtml(input).html;
+          } catch {
+            return; // refused rather than sent is the other acceptable outcome
+          }
+          // The URL may survive as the value of `c`, which nothing fetches.
+          // A fetching attribute name or a handler at a tokenizer boundary —
+          // whitespace, a slash or a closing quote — may not.
+          expect(html, input).not.toMatch(
+            /(^|[\s/"'])(src|srcset|imagesrcset|poster|background)\s*=/i
+          );
+          expect(html, input).not.toMatch(/(^|[\s/"'])on[a-z]+\s*=/i);
+          expect(html, input).not.toMatch(/javascript:/i);
+        }
+      ),
       RUNS
     );
   });

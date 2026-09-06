@@ -204,6 +204,26 @@ const NAMED_REFERENCES: Readonly<Record<string, string>> = {
 };
 
 /**
+ * One character reference in any of its three spellings, and whether it
+ * carried its semicolon.
+ *
+ * The digit runs are unbounded, and that is the point of this pattern. They
+ * used to be `{1,6}` and `{1,7}`, and the tokenizer consumes *as many digits as
+ * there are*: `&#0000000104;` is `h` to every mail client, while a pattern that
+ * stopped after seven digits read seven zeros — nothing — and left `104;ttps://`
+ * behind, which has no scheme and so was never a remote fetch. Leading zeros
+ * cost nothing to write and bought a tracking pixel past every pass, with an
+ * empty removal list.
+ *
+ * One alternation rather than three passes, so a value is decoded exactly once.
+ * Three passes in sequence decoded `&#x26;#104;` twice — first to `&#104;`,
+ * then to `h` — which a client never does. That only ever removed more than
+ * necessary, but a decoder that agrees with the client in one direction and
+ * not the other is a decoder nobody can reason about.
+ */
+const REFERENCE = /&(?:#[xX]([0-9a-fA-F]+)|#([0-9]+)|([a-zA-Z]{1,8}))(;?)/g;
+
+/**
  * Decodes character references the way an attribute value is decoded before a
  * client reads it as a URL.
  *
@@ -214,29 +234,48 @@ const NAMED_REFERENCES: Readonly<Record<string, string>> = {
  * legacy names that never did.
  */
 export function decodeReferences(value: string): string {
-  return value
-    .replace(/&#[xX]([0-9a-fA-F]{1,6});?/g, (_m, hex: string) =>
-      codePoint(parseInt(hex, 16))
-    )
-    .replace(/&#([0-9]{1,7});?/g, (_m, dec: string) =>
-      codePoint(parseInt(dec, 10))
-    )
-    .replace(
-      /&([a-zA-Z]{1,8})(;?)/g,
-      (match, name: string, terminator: string) => {
-        const decoded = NAMED_REFERENCES[name.toLowerCase()];
-        if (decoded === undefined) return match;
-        // Without the semicolon only the legacy names decode.
-        if (terminator === '' && !/^(amp|lt|gt|quot)$/i.test(name)) {
-          return match;
-        }
-        return decoded;
+  return value.replace(
+    REFERENCE,
+    (
+      match: string,
+      hex: string | undefined,
+      dec: string | undefined,
+      name: string | undefined,
+      terminator: string
+    ) => {
+      if (hex !== undefined) return codePoint(hex, 16);
+      if (dec !== undefined) return codePoint(dec, 10);
+      const decoded = NAMED_REFERENCES[(name ?? '').toLowerCase()];
+      if (decoded === undefined) return match;
+      // Without the semicolon only the legacy names decode.
+      if (terminator === '' && !/^(amp|lt|gt|quot)$/i.test(name ?? '')) {
+        return match;
       }
-    );
+      return decoded;
+    }
+  );
 }
 
-function codePoint(value: number): string {
-  if (!Number.isFinite(value) || value <= 0 || value > 0x10ffff) return '';
+/**
+ * The character a numeric reference stands for, as the tokenizer decides it.
+ *
+ * Zero, a surrogate and anything above U+10FFFF are U+FFFD to the tokenizer —
+ * a character, not nothing. Returning `''` for those would let `&#0;` act as
+ * an invisible separator that a client does not see. The digit run is read in
+ * full; only its length is bounded before parsing, and a run that long is
+ * beyond every code point anyway.
+ */
+function codePoint(digits: string, radix: 10 | 16): string {
+  const significant = digits.replace(/^0+/, '');
+  const value =
+    significant === ''
+      ? 0
+      : significant.length > 8
+        ? Number.POSITIVE_INFINITY
+        : parseInt(significant, radix);
+  if (value <= 0 || value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff)) {
+    return '�';
+  }
   return String.fromCodePoint(value);
 }
 
@@ -249,7 +288,7 @@ function codePoint(value: number): string {
 export function decodeCssEscapes(value: string): string {
   return decodeReferences(value)
     .replace(/\\([0-9a-fA-F]{1,6})\s?/g, (_m, hex: string) =>
-      codePoint(parseInt(hex, 16))
+      codePoint(hex, 16)
     )
     .replace(/\\([^\r\n0-9a-fA-F])/g, '$1');
 }
@@ -358,25 +397,72 @@ export function sanitizeHtml(input: string): SanitizedHtml {
   }
 
   const removed = new Set<string>();
+  const html = runPasses(input, removed);
+
+  // The passes again, once, as a check rather than a loop. Every removal above
+  // leaves a space behind, so a deletion cannot assemble a token out of pieces
+  // that were never one — that is what makes a single run sufficient. This
+  // second run is the proof: on markup the passes handle, it removes nothing.
+  // When it does remove something, the first run's list was not the whole
+  // truth, and that list is what the dialog reads out as "removed before
+  // sending". A counted pass rather than a fixpoint loop, because a loop
+  // that re-runs until nothing changes is quadratic in whatever nests.
+  const uncovered = new Set<string>();
+  if (runPasses(html, uncovered) !== html) {
+    throw new ToolInputError(
+      'smtp-mcp: the HTML body is refused rather than sent. Removing ' +
+        `${[...removed].join(', ')} uncovered ${[...uncovered].join(', ')} ` +
+        'underneath — markup assembled out of the pieces of other markup ' +
+        'cannot be cleaned with confidence. Remove the element and send again.'
+    );
+  }
+
+  const survivor = FORBIDDEN_AFTER_SANITIZING.exec(html);
+  if (survivor !== null) {
+    throw new ToolInputError(
+      `smtp-mcp: the HTML body still contains a <${survivor[1]?.toLowerCase() ?? '?'}> ` +
+        'tag after sanitising, so it is refused rather than sent. This is what ' +
+        'happens when markup cannot be cleaned with confidence — the usual ' +
+        'cause is a "<" inside an attribute value. Remove the element and ' +
+        'send again.'
+    );
+  }
+
+  return { html, removed: [...removed] };
+}
+
+/**
+ * One run of every removal pass, in order.
+ *
+ * Every removal is replaced by a space, not by nothing. `<img sr onclick="x"c=…>`
+ * is three harmless attributes to a tokenizer — `sr`, `onclick`, `c` — and
+ * cutting ` onclick="x"` out of the middle of them without a separator left
+ * `<img src=…>`: a tracking pixel manufactured by the pass that removes event
+ * handlers, after the pass that removes tracking pixels had already run, with
+ * the removal list reporting a click handler. Whitespace is inert everywhere
+ * it can land here — between tags, between attributes, inside text — and it
+ * is what keeps two fragments from becoming one token.
+ */
+function runPasses(input: string, removed: Set<string>): string {
   let html = input;
 
   html = html.replace(DANGEROUS_BLOCK, (match) => {
     removed.add(
       `<${/^<([a-z]+)/i.exec(match)?.[1]?.toLowerCase() ?? '?'}> element`
     );
-    return '';
+    return ' ';
   });
   html = html.replace(DANGEROUS_VOID, (match) => {
     removed.add(
       `<${/^<\/?([a-z]+)/i.exec(match)?.[1]?.toLowerCase() ?? '?'}> tag`
     );
-    return '';
+    return ' ';
   });
 
   html = html.replace(REMOTE_SUBRESOURCE, (match, tag: string) => {
     if (remoteSubresourceAttribute(match) === undefined) return match;
     removed.add(`remotely loaded <${tag.toLowerCase()}> (tracking risk)`);
-    return '';
+    return ' ';
   });
 
   // The same check again, attribute-shaped rather than tag-shaped, and both are
@@ -391,7 +477,7 @@ export function sanitizeHtml(input: string): SanitizedHtml {
       const value = (groups[0] ?? groups[1] ?? groups[2] ?? '') as string;
       if (!hasRemoteCandidate(value)) return match;
       removed.add(`remote ${attribute.toLowerCase()} URL (tracking risk)`);
-      return '';
+      return ' ';
     }
   );
 
@@ -399,7 +485,7 @@ export function sanitizeHtml(input: string): SanitizedHtml {
     removed.add(
       `${/^\s*on([a-z]+)/i.exec(match)?.[1]?.toLowerCase() ?? 'event'} handler`
     );
-    return '';
+    return ' ';
   });
 
   html = html.replace(URL_ATTRIBUTE, (match, attribute: string, ...groups) => {
@@ -412,7 +498,7 @@ export function sanitizeHtml(input: string): SanitizedHtml {
     // not bounded by a fixed vocabulary — a 60 kB "scheme" is a legal match.
     // This list is read out in the confirmation dialog, so it is cut here.
     removed.add(`${abbreviate(scheme)} URL in ${attribute.toLowerCase()}`);
-    return '';
+    return ' ';
   });
 
   // The whole inline style, decoded as a CSS parser would decode it. `u\72l(`
@@ -421,7 +507,7 @@ export function sanitizeHtml(input: string): SanitizedHtml {
     const value = (groups[0] ?? groups[1] ?? groups[2] ?? '') as string;
     if (!CSS_FETCH.test(decodeCssEscapes(value))) return match;
     removed.add('url() in a style attribute');
-    return '';
+    return ' ';
   });
 
   html = html.replace(CSS_URL, () => {
@@ -429,18 +515,7 @@ export function sanitizeHtml(input: string): SanitizedHtml {
     return 'none';
   });
 
-  const survivor = FORBIDDEN_AFTER_SANITIZING.exec(html);
-  if (survivor !== null) {
-    throw new ToolInputError(
-      `smtp-mcp: the HTML body still contains a <${survivor[1]?.toLowerCase() ?? '?'}> ` +
-        'tag after sanitising, so it is refused rather than sent. This is what ' +
-        'happens when markup cannot be cleaned with confidence — the usual ' +
-        'cause is a "<" inside an attribute value. Remove the element and ' +
-        'send again.'
-    );
-  }
-
-  return { html, removed: [...removed] };
+  return html;
 }
 
 /**
