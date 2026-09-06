@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { forwardSubject, replySubject } from '../src/tools/send.js';
+import { confirmTokenParam } from '../src/schema.js';
 
 import { FakeSmtp } from './fake-smtp.js';
 import {
@@ -1038,6 +1039,28 @@ describe('send_mail on the 2026-07-28 revision', () => {
       requestState: asked.requestState,
     });
     expect(again.resultType).toBe('input_required');
+    expect(harness.smtp.delivered).toHaveLength(0);
+    await harness.close();
+  });
+});
+
+describe('the confirmation token parameter', () => {
+  it('is bounded, like every other caller string', () => {
+    // A token is 32 hex characters. Without a ceiling the one parameter that
+    // is compared against a store accepted a megabyte.
+    expect(confirmTokenParam.safeParse('a'.repeat(32)).success).toBe(true);
+    expect(confirmTokenParam.safeParse('a'.repeat(256)).success).toBe(true);
+    expect(confirmTokenParam.safeParse('a'.repeat(257)).success).toBe(false);
+  });
+
+  it('is refused by the tool before anything is prepared', async () => {
+    const harness = await connect({ config: { allowSend: true } });
+    const result = await call(
+      harness.client,
+      'send_mail',
+      sendArgs({ confirm_token: 'a'.repeat(100_000) })
+    );
+    expect(result.isError).toBe(true);
     expect(harness.smtp.delivered).toHaveLength(0);
     await harness.close();
   });

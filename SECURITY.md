@@ -111,36 +111,32 @@ during composition.
 
 **What an approval binds, and what it does not.** The fingerprint ties an approval to one exact
 message: the three recipient fields separately, the subject, the body, the quoted original, the
-HTML part, the attachment names and the attachment bytes. That is binding. It is not
-_freshness_ — `mcp-approval` says so in its own security policy: the sealed elicitation state
-proves that an answer belongs to the question it was given, and it stays redeemable until it
-expires. Nothing in it counts how often it has been spent.
+HTML part, the attachment names and the attachment bytes. That is binding. _Freshness_ — that
+an answer is spent by being used — is a separate property, and it is layered twice. Since
+`mcp-approval` 0.8.1 the sealed elicitation state carries a nonce that is spent on the first
+answer, accepted or declined, so the same state presented again is a fresh question rather than
+a second send. Before 0.8.1 the seal proved binding only and stayed redeemable until it expired;
+this server never relied on that either, because of the record described below.
 
-Everywhere else in this family that gap is harmless, because the guarded operation is idempotent:
-deleting an already-deleted note changes nothing, and a repeated write lands on the same value.
-Here the second call reaches a person and neither copy can be recalled, which makes `send_mail`
-the sharpest non-idempotent operation in the whole family.
+Everywhere else in this family the older gap was harmless, because the guarded operation is
+idempotent: deleting an already-deleted note changes nothing, and a repeated write lands on the
+same value. Here the second call reaches a person and neither copy can be recalled, which makes
+`send_mail` the sharpest non-idempotent operation in the whole family.
 
-**How the three paths stand today — measured, not assumed.** Recorded against the built entry
-point over real stdio on 2026-09-02:
+**How the three paths stand — measured, not assumed.** `src/index.ts` serves through
+`serveStdio`, which negotiates either protocol revision, so all three rows are reachable through
+the binary this repository ships:
 
-| Path                                           | Can the same approval be spent twice?                                |
-| ---------------------------------------------- | -------------------------------------------------------------------- |
-| Elicitation on `2025-11-25` (what ships today) | No. The dialog is a server→client request _inside_ one `tools/call`. |
-| Two-call token                                 | No. `ConfirmationStore.consume` deletes the token on success.        |
-| Elicitation on `2026-07-28` (`serveStdio`)     | **Yes** — the `requestState` is held by the client and resent.       |
+| Path                                       | Can the same approval be spent twice?                                                                     |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------- |
+| Elicitation on `2025-11-25`                | No. The dialog is a server→client request _inside_ one `tools/call`.                                      |
+| Two-call token                             | No. `ConfirmationStore.consume` deletes the token on success.                                             |
+| Elicitation on `2026-07-28` (`serveStdio`) | No. The `requestState` is single-use since `mcp-approval` 0.8.1, and the sent record answers a retry too. |
 
-`src/index.ts` connects a plain `StdioServerTransport`, and `SUPPORTED_PROTOCOL_VERSIONS` in the
-installed SDK is `2025-11-25, 2025-06-18, 2025-03-26, 2024-11-05, 2024-10-07`. A client that
-_asks_ for `2026-07-28` is answered with `2025-11-25`; on that revision the recording shows one
-`tools/call`, one response, an `elicitation/create` in between, and **no `requestState` anywhere
-on the wire**. So the third row is not reachable through the binary this repository ships.
-
-It is reachable through the SDK, though. `serveStdio` implements the newer revision, the answer
-comes back as a `requestState` the client holds, and `mcp-approval` binds that seal without
-dating it. Choosing `serveStdio` in `src/index.ts` is a one-line change, and
-`test/send.test.ts` demonstrates the consequence on exactly that transport: replaying one
-accepted answer used to deliver a second copy.
+The third row used to say **yes**: the `requestState` is held by the client and resent, and until
+0.8.1 the library bound that seal without dating it. `test/send.test.ts` demonstrates the case on
+exactly that transport — "will not spend the same answer twice" hands the same `requestState`
+back twice and asserts one delivery — and it is what turned red before the record below existed.
 
 **And the narrower reason, which does not depend on the revision at all.** A tool call is
 at-least-once by nature: a client whose request times out and retries, a host that reconnects
@@ -154,28 +150,28 @@ again and no quota is spent. Outside the window the same text sends normally: so
 deliberately repeats a message an hour later is not the case this guards against, and silently
 swallowing it would be a worse failure than sending it twice.
 
-**The day `src/index.ts` speaks `2026-07-28`.** On that revision the elicitation is not a push but
-a return value: the handler answers `input_required`, the call ends, the person decides, and the
-client retries carrying a `requestState` that really does travel over the wire — and stays valid
-until it expires. The record above becomes the only thing standing in the way, so three things
-have to be true at once. Check them together:
+**On `2026-07-28` three things have to be true at once.** On that revision the elicitation is not
+a push but a return value: the handler answers `input_required`, the call ends, the person
+decides, and the client retries carrying a `requestState` that really does travel over the wire.
+The library's spent-state record and this server's sent record are what stand in the way, and
+both are per process. Check these together:
 
 1. The record is written **before** the tool result is returned, not after, so a client that
    never receives the result still cannot re-spend the approval.
 2. The record outlives the approval: its window must be at least `createApproval`'s `ttlSeconds`
    (15 minutes by default) and at least the `ConfirmationStore` TTL (5 minutes). Lower either and
    they have to move together.
-3. The record survives whatever the deployment does to the process. A per-process map is right
+3. The records survive whatever the deployment does to the process. A per-process map is right
    for stdio, where the process _is_ the session; behind a stateless gateway that serves the two
-   halves of one flow from different processes it is not, and it would fail **open** on a
-   restart. That deployment needs a shared store, and until it has one it must not offer the
-   newer revision.
+   halves of one flow from different processes it is not, and both records — the library's spent
+   states and this server's sent messages — would fail **open** on a restart. That deployment
+   needs a shared store, and until it has one it must not offer the newer revision.
 
 A test that proves it has to drive the real thing rather than the in-memory pair.
 `test/harness.ts` has `connectModern`, which serves the server through `serveStdio` with
 `autoFulfill: false`; "will not spend the same answer twice" in `test/send.test.ts` hands the same
-`requestState` back twice and asserts one delivery. Keep that test green when the entry point
-changes — it is the one that fails first.
+`requestState` back twice and asserts one delivery. Keep that test green when the entry point or
+the library changes — it is the one that fails first.
 
 **The residual case, stated rather than hidden.** If the connection fails _after_ the end of
 `DATA` and before the SMTP server's `250`, the outcome is genuinely unknown at this layer —
@@ -242,6 +238,16 @@ accept all three. A value is read the way a client reads it: character reference
 backslashes read as slashes in a network-path start. An inline style is decoded once more as CSS,
 where `u\72l(` is `url(`, and dropped whole when anything in it fetches. Each of these was a shape
 that went out untouched with an empty removal list before it was covered.
+
+Two more shapes of the same kind, found in the third review. A numeric character reference is
+read to the end of its digit run, however long: `&#0000000104;` is `h` to every client, and a
+decoder that stopped after seven digits saw seven zeros and left a scheme-less `104;ttps://`
+behind. And every removal leaves a space in its place. `<img sr onclick="x"c=…>` is three inert
+attributes to a tokenizer; cutting the handler out of the middle with nothing left behind made
+`<img src=…>` — a beacon manufactured by the pass that removes handlers, after the pass that
+removes beacons had already run. A second, counted run of the passes then refuses the message if
+it still finds anything, so the removal list the dialog reads out is the whole truth or the
+message does not leave.
 
 **And the passes can refuse rather than repair.** A regex is not a parser, and the recipient's
 client is; the two can always be made to disagree somewhere. When markup that must not survive

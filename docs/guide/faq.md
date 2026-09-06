@@ -108,9 +108,9 @@ An identical message — same recipients, subject, body, quote, HTML and attachm
 by the SMTP server a few minutes ago, so this call returned that Message-ID instead of sending a
 second copy. Nobody was asked again and no quota was spent.
 
-An approval stays redeemable until it expires, so without this a retried tool call would put a
-second copy in somebody's inbox. To send the same text again deliberately, change something in it
-or wait fifteen minutes.
+A tool call is at-least-once by nature — a client that times out retries, a host reconnects
+mid-flow — so without this a retried call would put a second copy in somebody's inbox with nobody
+asked. To send the same text again deliberately, change something in it or wait fifteen minutes.
 
 ## The quoted text in my forward triggered a warning
 

@@ -45,6 +45,46 @@ describe('detectSuspicious', () => {
       ).length
     ).toBeGreaterThan(1);
   });
+
+  it('still sees a delimiter that is part of a longer run', () => {
+    // The anchor must not cost a match: the run is examined from its start,
+    // and a keyword after a run of any length is the shape being looked for.
+    expect(detectSuspicious('-'.repeat(40) + ' SYSTEM PROMPT')).toContain(
+      'fake-delimiter'
+    );
+    expect(detectSuspicious('Notes\n#### begin')).toContain('fake-delimiter');
+  });
+
+  describe('every heuristic is linear in its own trigger', () => {
+    // A timing, deliberately. The delimiter pattern was `(-{3,}|…)` with no
+    // anchor, and a regex engine tries such a run at every position and
+    // backtracks through every length at each — quadratic. 100 000 dashes took
+    // 9.5 s; the schema admits 500 000 characters in the body, the quote and
+    // the HTML part each, and preview_mail runs the detector on all three
+    // with nothing in front of it. The budget is far above the measurement
+    // (single-digit milliseconds) and far below the failure (minutes).
+    const BUDGET_MS = 500;
+    const MAX = 500_000;
+    const triggers: Array<[string, string]> = [
+      ['dashes', '-'.repeat(MAX)],
+      ['equals signs', '='.repeat(MAX)],
+      ['hashes', '#'.repeat(MAX)],
+      ['mixed delimiter runs', '-=#'.repeat(MAX / 3)],
+      ['delimiters and spaces', '--- '.repeat(MAX / 4)],
+      ['send to', 'send to '.repeat(MAX / 8)],
+      ['ignore all', 'ignore all '.repeat(MAX / 11)],
+      ['word characters', 'a'.repeat(MAX)],
+      ['colons', 'system:'.repeat(MAX / 7)],
+    ];
+    for (const [name, text] of triggers) {
+      it(`handles ${name} promptly`, () => {
+        const started = process.hrtime.bigint();
+        detectSuspicious(text);
+        const ms = Number(process.hrtime.bigint() - started) / 1e6;
+        expect(ms).toBeLessThan(BUDGET_MS);
+      });
+    }
+  });
 });
 
 describe('stripInvisible', () => {

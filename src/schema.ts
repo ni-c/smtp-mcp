@@ -208,9 +208,15 @@ export const attachmentsParam = z
       'unavailable unless that variable is set.'
   );
 
+/**
+ * A confirmation token is 32 hex characters; the sealed request state that
+ * replaces it on the newer protocol revision never travels through this
+ * parameter. 256 leaves room for either shape and refuses a megabyte.
+ */
 export const confirmTokenParam = z
   .string()
   .min(1)
+  .max(256)
   .optional()
   .describe(
     'Confirmation token from a previous call of this tool with the same arguments. Omit on the first call.'

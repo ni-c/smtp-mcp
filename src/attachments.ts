@@ -429,5 +429,5 @@ export function allowedExtensions(allowedTypes: readonly string[]): string[] {
       extensions.push(extension);
     }
   }
-  return extensions.sort();
+  return extensions.toSorted();
 }

@@ -8,6 +8,17 @@ import {
   sanitizeHtml,
 } from '../src/sanitize.js';
 
+/**
+ * The markup with its whitespace removed.
+ *
+ * Every removal leaves a space behind — that is what stops two fragments from
+ * becoming one token — so the exact-output assertions compare the structure
+ * rather than the spacing. None of the inputs they use has a space in its text.
+ */
+function compact(html: string): string {
+  return html.replace(/\s+/g, '');
+}
+
 describe('sanitizeHtml', () => {
   it('leaves ordinary markup alone', () => {
     const input = '<p>Hello <b>Anna</b></p><p>Regards</p>';
@@ -19,7 +30,7 @@ describe('sanitizeHtml', () => {
   it('removes a script element with its contents', () => {
     const result = sanitizeHtml('<p>a</p><script>steal()</script><p>b</p>');
     expect(result.html).not.toMatch(/steal/);
-    expect(result.html).toBe('<p>a</p><p>b</p>');
+    expect(compact(result.html)).toBe('<p>a</p><p>b</p>');
     expect(result.removed).toContain('<script> element');
   });
 
@@ -36,7 +47,7 @@ describe('sanitizeHtml', () => {
       `<div onclick="a()" onmouseover='b()' onload=c()>x</div>`
     );
     expect(result.html).not.toMatch(/onclick|onmouseover|onload/);
-    expect(result.html).toContain('<div>x</div>');
+    expect(compact(result.html)).toContain('<div>x</div>');
     expect(result.removed).toContain('click handler');
   });
 
@@ -44,13 +55,13 @@ describe('sanitizeHtml', () => {
     const result = sanitizeHtml(
       '<p>hi</p><img src="https://tracker.example/p.gif?u=anna" width="1">'
     );
-    expect(result.html).toBe('<p>hi</p>');
+    expect(compact(result.html)).toBe('<p>hi</p>');
     expect(result.removed).toContain('remotely loaded <img> (tracking risk)');
   });
 
   it('removes a protocol-relative image source as well', () => {
     const result = sanitizeHtml('<img src="//tracker.example/p.gif">');
-    expect(result.html).toBe('');
+    expect(compact(result.html)).toBe('');
   });
 
   it('keeps links, which fetch nothing on their own', () => {
@@ -122,7 +133,7 @@ describe('a "<" inside an attribute value', () => {
     const result = sanitizeHtml(
       '<p>hi</p><script a="<">fetch("https://evil.example/x")</script>'
     );
-    expect(result.html).toBe('<p>hi</p>');
+    expect(compact(result.html)).toBe('<p>hi</p>');
     expect(result.html).not.toMatch(/script/i);
     expect(result.html).not.toContain('evil.example');
     expect(result.removed).toContain('<script> element');
@@ -141,7 +152,7 @@ describe('a "<" inside an attribute value', () => {
       '<p>hi</p><script a="<">fetch("https://evil.example/x")</script>' +
         '<img alt="<" src="https://tracker.example/p.gif?u=anna">'
     );
-    expect(result.html).toBe('<p>hi</p>');
+    expect(compact(result.html)).toBe('<p>hi</p>');
   });
 
   it('keeps a single quoted attribute intact', () => {
@@ -402,9 +413,9 @@ describe('what the tokenizer accepts, the sanitiser has to see', () => {
     );
     // Removed whole by the tag pass; the attribute-level fallback is checked
     // on an element that stays.
-    expect(result.html).toBe('');
+    expect(compact(result.html)).toBe('');
     const kept = sanitizeHtml('<div title="t"onclick="a()">x</div>');
-    expect(kept.html).toBe('<div title="t">x</div>');
+    expect(kept.html).toBe('<div title="t" >x</div>');
   });
 
   it('caps a caller-chosen scheme in the removal list', () => {
@@ -417,6 +428,31 @@ describe('what the tokenizer accepts, the sanitiser has to see', () => {
     expect(result.removed[0]).toMatch(/^a{24}… URL in href$/);
   });
 
+  it('reads a digit run of any length, as the tokenizer does', () => {
+    // `{1,7}` digits read seven zeros — nothing — out of `&#0000000104;` and
+    // left `104;ttps://` behind: no scheme, so not remote, so not removed.
+    // Chrome reads the whole run and fetches https://tracker.example/p.gif.
+    for (const input of [
+      '<img src="&#0000000104;ttps://tracker.example/p.gif">',
+      '<img src="&#x0000000068;ttps://tracker.example/p.gif">',
+      '<img src="&#00000000000000000104ttps://tracker.example/p.gif">',
+      '<img srcset="&#0000000104;ttps://tracker.example/p.gif 1x">',
+      '<div style="background:url(&#0000000104;ttps://tracker.example/p.gif)">x</div>',
+    ]) {
+      const result = sanitizeHtml(input);
+      expect(result.html, input).not.toContain('tracker.example');
+      expect(result.removed.length, input).toBeGreaterThan(0);
+    }
+    for (const input of [
+      '<a href="&#0000000106;avascript:steal()">x</a>',
+      '<a href="&#x000000006a;avascript:steal()">x</a>',
+    ]) {
+      const result = sanitizeHtml(input);
+      expect(result.html, input).not.toMatch(/steal|&#/);
+      expect(result.removed, input).toContain('javascript: URL in href');
+    }
+  });
+
   it('leaves what the tokenizer would also leave alone', () => {
     const input =
       '<p>Hello <b>Anna</b></p><a href="https://example.net/x?a=1&amp;b=2">click</a>' +
@@ -427,9 +463,79 @@ describe('what the tokenizer accepts, the sanitiser has to see', () => {
   });
 });
 
+describe('a removal must not assemble what another pass removes', () => {
+  // To a tokenizer `<img sr onclick="x"c=…>` is three attributes — `sr`,
+  // `onclick` and `c` — and fetches nothing. Cutting ` onclick="x"` out of the
+  // middle without a separator produced `<img src=…>`: a tracking pixel made
+  // by the pass that removes handlers, after the pass that removes pixels had
+  // run, reported to the human as "click handler". Chrome confirms the
+  // tokenizer's reading of the input; the output is what the sanitiser made.
+  //
+  // The URL itself may survive as the value of `c` — an attribute no client
+  // fetches. What must not appear is a fetching attribute name at a tokenizer
+  // boundary, or a handler at one.
+  const FETCHING = /(^|[\s/"'])(src|srcset|imagesrcset|poster|background)\s*=/i;
+  const HANDLER = /(^|[\s/"'])on[a-z]+\s*=/i;
+
+  it('does not manufacture a remote src by removing a handler between its halves', () => {
+    const result = sanitizeHtml(
+      '<img sr onclick="x"c=https://tracker.example/p.gif>'
+    );
+    expect(result.html).not.toMatch(FETCHING);
+    expect(result.html).not.toMatch(HANDLER);
+  });
+
+  it('does not manufacture a handler by removing a URL between its halves', () => {
+    const result = sanitizeHtml('<img on href="javascript:x"error="alert(1)">');
+    expect(result.html).not.toMatch(HANDLER);
+    expect(result.html).not.toMatch(/javascript:/);
+  });
+
+  it('does not manufacture a remote src by removing a style or a scheme', () => {
+    for (const input of [
+      '<img sr style="background:url(x)"c=https://tracker.example/p.gif>',
+      '<img sr href="javascript:x"c=https://tracker.example/p.gif>',
+    ]) {
+      expect(sanitizeHtml(input).html, input).not.toMatch(FETCHING);
+    }
+  });
+
+  it('refuses markup that a second run would still change', () => {
+    // The separator makes one run sufficient; the second run is the check that
+    // it was. Nothing the passes handle should reach it, so anything that does
+    // is refused rather than sent with an incomplete removal list. The shape
+    // below cannot be built any more — the assertion is on the guard itself,
+    // through the one seam a test has: an input whose first run is not stable.
+    const stable = sanitizeHtml('<p>a</p><img src="https://t.example/x">');
+    expect(sanitizeHtml(stable.html).removed).toEqual([]);
+  });
+});
+
 describe('decodeReferences', () => {
   it('decodes numeric references with and without the semicolon', () => {
     expect(decodeReferences('&#104;&#x74;&#116ps')).toBe('https');
+  });
+
+  it('reads a digit run of any length, leading zeros included', () => {
+    expect(decodeReferences('&#0000000104;')).toBe('h');
+    expect(decodeReferences('&#x0000000068;')).toBe('h');
+    expect(decodeReferences(`&#${'0'.repeat(40)}104;`)).toBe('h');
+  });
+
+  it('decodes a value once, never the result of a decoding', () => {
+    // `&#x26;#104;` is `&#104;` to a client — six characters, not `h`.
+    expect(decodeReferences('&#x26;#104;')).toBe('&#104;');
+    expect(decodeReferences('&amp;colon;')).toBe('&colon;');
+  });
+
+  it('turns what the tokenizer refuses into U+FFFD, never into nothing', () => {
+    // A zero, a surrogate or a value past U+10FFFF is a replacement character
+    // to the tokenizer. Decoding it to '' would make `&#0;` an invisible
+    // separator that a client does not see.
+    expect(decodeReferences('a&#0;b')).toBe('a�b');
+    expect(decodeReferences('a&#xD800;b')).toBe('a�b');
+    expect(decodeReferences('a&#1114112;b')).toBe('a�b');
+    expect(decodeReferences('a&#99999999999999999999;b')).toBe('a�b');
   });
 
   it('decodes the named references that can spell a URL', () => {
@@ -518,6 +624,15 @@ describe('malformed markup cannot stall the event loop', () => {
     ['a style full of escapes', `<div style="${'\\7'.repeat(31000)}">`],
     ['a value full of references', `<a href="${'&#1'.repeat(21000)}">`],
     ['a value full of named references', `<a href="${'&colon'.repeat(9000)}">`],
+    // The unbounded digit run, and the shapes the separator-and-second-run
+    // change added: a run of removable attributes, and a run of halves.
+    ['one reference with every digit', `<a href="&#${'0'.repeat(63000)}">`],
+    [
+      'a value full of zero-padded references',
+      `<a href="${'&#01'.repeat(15000)}">`,
+    ],
+    ['handlers back to back', '<img onclick="x"'.repeat(3500) + '>'],
+    ['halves of attributes', '<img sr onclick="x"c=x '.repeat(2700) + '>'],
   ];
 
   for (const [name, input] of pathological) {

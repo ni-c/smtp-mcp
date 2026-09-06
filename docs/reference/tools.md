@@ -57,6 +57,13 @@ No parameters. Connects, negotiates TLS, authenticates and disconnects. No messa
 
 Use it to tell a configuration problem apart from a delivery problem.
 
+It tries the server at most once every ten seconds. A call inside that window repeats the
+previous outcome — success or failure — with `cached: true` and a note saying when the next
+real attempt is possible. Every call is a login against the operator's own provider, and
+providers lock an account after a handful of failed logins in quick succession; a model that
+reads "authentication refused" and tries again must not be able to turn one wrong password
+into a locked mailbox.
+
 ## Sending
 
 All three ask a person to confirm before acting, using MCP elicitation, and fall back to a

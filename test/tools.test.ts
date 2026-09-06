@@ -2,11 +2,19 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MAX_RESULT_BYTES } from '../src/result.js';
 
 import { call, connect, jsonOf, sendArgs, textOf } from './harness.js';
+
+/** Fifty long addresses at a domain no allowlist covers. */
+function strangers(prefix: string): string[] {
+  return Array.from(
+    { length: 50 },
+    (_, i) => `${prefix}${i}.${'x'.repeat(200)}@evil.example`
+  );
+}
 
 describe('get_server_info', () => {
   it('leads with whether this server can send at all', async () => {
@@ -199,6 +207,27 @@ describe('preview_mail', () => {
     );
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/SMTP_ALLOWED_RECIPIENTS/);
+    await harness.close();
+  });
+
+  it('names the first refused addresses and counts the rest', async () => {
+    // Fifty addresses of up to 320 characters in each of three fields is
+    // 48 kB, and an error message is not the place for it.
+    const harness = await connect();
+    const result = await call(harness.client, 'preview_mail', {
+      to: strangers('to'),
+      cc: strangers('cc'),
+      bcc: strangers('bcc'),
+      subject: 'x',
+      body: 'x',
+    });
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toMatch(/150 recipient\(s\) are not covered/);
+    expect(text).toMatch(/… and 130 more/);
+    expect(text).toContain('to0.');
+    expect(text).not.toContain('cc0.');
+    expect(text.length).toBeLessThan(6000);
     await harness.close();
   });
 
@@ -400,6 +429,70 @@ describe('test_connection', () => {
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/SMTP_HOST/);
     await harness.close();
+  });
+
+  describe('tries the server at most once every ten seconds', () => {
+    // Every call is a login against the operator's own provider, and providers
+    // lock an account after a handful of failed logins in quick succession. A
+    // model that reads "authentication refused" and retries — the tool says it
+    // is read-only, idempotent and cheap — turns one wrong password into a
+    // locked mailbox. Only the Date is faked: the in-memory transport needs the
+    // real timers.
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('repeats a success rather than dialling again', async () => {
+      const harness = await connect();
+      const first = jsonOf(await call(harness.client, 'test_connection')) as {
+        cached: boolean;
+      };
+      const second = jsonOf(await call(harness.client, 'test_connection')) as {
+        cached: boolean;
+        reachable: boolean;
+        note: string;
+      };
+      expect(first.cached).toBe(false);
+      expect(second.cached).toBe(true);
+      expect(second.reachable).toBe(true);
+      expect(second.note).toMatch(/at most once every ten seconds/);
+      expect(
+        harness.smtp.calls.filter((c) => c.name === 'verify')
+      ).toHaveLength(1);
+      await harness.close();
+    });
+
+    it('repeats a failure rather than retrying the login', async () => {
+      const harness = await connect();
+      harness.smtp.verifyError = Object.assign(new Error('Invalid login'), {
+        code: 'EAUTH',
+      });
+      const first = await call(harness.client, 'test_connection');
+      const second = await call(harness.client, 'test_connection');
+      expect(first.isError).toBe(true);
+      expect(second.isError).toBe(true);
+      expect(textOf(second)).toMatch(/SMTP_USER and SMTP_PASSWORD/);
+      expect(textOf(second)).toMatch(/Not retried/);
+      expect(
+        harness.smtp.calls.filter((c) => c.name === 'verify')
+      ).toHaveLength(1);
+      await harness.close();
+    });
+
+    it('dials again once the window has passed', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      const harness = await connect();
+      await call(harness.client, 'test_connection');
+      vi.setSystemTime(Date.now() + 10_001);
+      const later = jsonOf(await call(harness.client, 'test_connection')) as {
+        cached: boolean;
+      };
+      expect(later.cached).toBe(false);
+      expect(
+        harness.smtp.calls.filter((c) => c.name === 'verify')
+      ).toHaveLength(2);
+      await harness.close();
+    });
   });
 });
 

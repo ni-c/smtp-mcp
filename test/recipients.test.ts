@@ -53,6 +53,26 @@ describe('parseAllowlist', () => {
       /not a valid email address/
     );
   });
+
+  it('does not repeat a long or control-laden entry in the error', () => {
+    // The error goes to a startup log, and the entry is whatever was pasted
+    // into the variable — a token, or a line that rewrites the one above it.
+    for (const entry of [
+      `@${'x'.repeat(5000)}`,
+      `${'x'.repeat(5000)}@@example.net`,
+      'plain\u001b[2K\u001b[1Aword',
+    ]) {
+      let message = '';
+      try {
+        parseAllowlist(entry);
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message, entry).not.toBe('');
+      expect(message.length, entry).toBeLessThan(200);
+      expect(message, entry).not.toContain('\u001b');
+    }
+  });
 });
 
 describe('domainOf', () => {
