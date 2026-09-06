@@ -100,7 +100,26 @@ export function createServer(config: Config, deps: ServerDeps = {}): McpServer {
   };
 
   const server = new McpServer(
-    { name: 'smtp-mcp', version },
+    {
+      name: 'smtp-mcp',
+      title: 'SMTP',
+      description:
+        'MCP server that sends mail over SMTP, gated behind an allowlist and a human confirmation',
+      version: packageVersion(),
+      websiteUrl: 'https://smtp-mcp.ni-c.de',
+      icons: [
+        {
+          src: 'https://smtp-mcp.ni-c.de/icon-512.png',
+          mimeType: 'image/png',
+          sizes: ['512x512'],
+        },
+        {
+          src: 'https://smtp-mcp.ni-c.de/favicon.svg',
+          mimeType: 'image/svg+xml',
+          sizes: ['any'],
+        },
+      ],
+    },
     // Defence in depth, not the mechanism. Some clients do not pass this field
     // to the model at all, so nothing may depend on it being read. The
     // confirmation and the allowlist are what carry the weight; this is here
