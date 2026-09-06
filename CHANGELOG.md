@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      last in the file so the link definitions come along. -->
 <!-- #region changelog -->
 
+## [Unreleased]
+
+### Fixed
+
+- Container CVEs reach the Security tab again. The `container-scan` job ran
+  Trivy only as a gate, so a finding existed for exactly as long as someone was
+  reading the CI log: nothing was uploaded, no alert was raised, and a fixed CVE
+  had no record of ever having been there. The job now reports first and gates
+  second — one SARIF upload per architecture, each under its own category — the
+  arrangement every other server in the family already had.
+
 ## [0.1.1] - 2026-09-06
 
 ### Fixed
