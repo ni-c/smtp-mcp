@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import type { McpServer } from '@modelcontextprotocol/server';
+import type { CallToolResult, McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import {
   addressParam,
@@ -25,7 +25,12 @@ import {
   type PreparedMessage,
 } from '../prepare.js';
 import { describeAllowlist, isAllowed } from '../recipients.js';
-import { fencedUntrustedResult, jsonResult, run } from '../result.js';
+import {
+  errorResult,
+  fencedUntrustedResult,
+  jsonResult,
+  run,
+} from '../result.js';
 import { untrustedFields } from '../output-schema.js';
 import { ALL_TOOLS, INFO_TOOLS } from './catalogue.js';
 import type { ToolContext } from './context.js';
@@ -366,6 +371,10 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
       })
   );
 
+  // The last attempt and when it was made, for the cooldown below. One per
+  // server, like the rate limiter: the process is the session.
+  let lastAttempt: { at: number; outcome: CallToolResult } | undefined;
+
   server.registerTool(
     'test_connection',
     {
@@ -373,7 +382,9 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
       description:
         'Opens a connection to the SMTP server, negotiates TLS and ' +
         'authenticates, then closes it again. No message is sent. Use it to ' +
-        'tell a configuration problem apart from a delivery problem.',
+        'tell a configuration problem apart from a delivery problem. Tries ' +
+        'the server at most once every ten seconds; a call inside that window ' +
+        'repeats the previous outcome and says so.',
       inputSchema: z.object({}),
       // Nothing changes on the far side: this opens a session and closes it.
       annotations: READ_ONLY,
@@ -383,11 +394,34 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         port: z.number().int(),
         tls: z.string(),
         authenticated: z.literal(true),
+        cached: z
+          .boolean()
+          .describe(
+            'True when this repeats an attempt made within the last ten seconds.'
+          ),
         note: z.string(),
       }),
     },
-    () =>
-      run(async () => {
+    async () => {
+      // Every call is an AUTH against the operator's own mailbox provider,
+      // and providers lock an account after a handful of failed logins in
+      // quick succession. A model that reads "authentication refused" and
+      // tries again — and again, because the tool is read-only, idempotent
+      // and cheap by its own annotations — turns one wrong password into a
+      // locked mailbox. Nothing here sends, so the send rate limit does not
+      // cover it; this does. Inside the window the previous outcome is
+      // repeated, marked as such, rather than a fresh attempt made.
+      const now = Date.now();
+      if (
+        lastAttempt !== undefined &&
+        now - lastAttempt.at < CONNECTION_TEST_COOLDOWN_MS
+      ) {
+        const wait = Math.ceil(
+          (CONNECTION_TEST_COOLDOWN_MS - (now - lastAttempt.at)) / 1000
+        );
+        return repeatOutcome(lastAttempt.outcome, wait);
+      }
+      const outcome = (await run(async () => {
         await client.verify();
         // The description says this opens a session and closes it again, and
         // it has to be true: `verify()` leaves an authenticated, pooled
@@ -400,8 +434,46 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
           port: config.smtp.port,
           tls: config.smtp.tls,
           authenticated: true,
+          cached: false,
           note: 'The connection works and the credentials were accepted. No message was sent.',
         });
-      })
+      })) as CallToolResult;
+      lastAttempt = { at: now, outcome };
+      return outcome;
+    }
   );
+}
+
+/** How long `test_connection` waits before it will dial the server again. */
+const CONNECTION_TEST_COOLDOWN_MS = 10_000;
+
+/**
+ * The previous outcome of `test_connection`, marked as a repeat.
+ *
+ * A failure is repeated as a failure — that is what the caller would get from
+ * a fresh attempt inside the window, minus the login attempt against the
+ * provider — and a success as a success with `cached: true`.
+ */
+function repeatOutcome(
+  outcome: CallToolResult,
+  waitSeconds: number
+): CallToolResult {
+  const notice =
+    `test_connection tries the server at most once every ten seconds. This ` +
+    `repeats the outcome of the last attempt; the next real attempt is ` +
+    `possible in about ${waitSeconds} second(s).`;
+  if (outcome.isError === true) {
+    return errorResult(`${textOfResult(outcome)}\n\n(Not retried: ${notice})`);
+  }
+  return jsonResult({
+    ...outcome.structuredContent,
+    cached: true,
+    note: `${notice} The connection worked then, and no message was sent.`,
+  });
+}
+
+function textOfResult(outcome: CallToolResult): string {
+  return outcome.content
+    .map((part) => (part.type === 'text' ? part.text : ''))
+    .join('\n');
 }

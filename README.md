@@ -231,7 +231,7 @@ Always registered. None of these can put a message on the wire.
 | `get_server_info`     | The endpoint, the fixed sender, the allowlist, the limits, and whether sending is on at all.   |
 | `validate_recipients` | Which addresses this server may write to, and why the others are refused. No connection made.  |
 | `preview_mail`        | Builds exactly the message `send_mail` would build and shows it. Runs every check a send runs. |
-| `test_connection`     | Connects, negotiates TLS, authenticates, disconnects. Sends nothing.                           |
+| `test_connection`     | Connects, negotiates TLS, authenticates, disconnects. Sends nothing; at most once every 10 s.  |
 
 Registered only with `SMTP_ALLOW_SEND=true`. 👤 marks the ones that ask a human before acting.
 
