@@ -64,6 +64,29 @@ describe('ELICITATION', () => {
       expect(message, raw).toContain('ELICITATION');
       expect(message, raw).toContain('"true"');
       expect(message, raw).toContain('"false"');
+      error.mockRestore();
+      exit.mockRestore();
+    }
+  });
+
+  it('does not repeat a long or control-laden value in the diagnostic', () => {
+    // The branch that rejects a value is where a token pasted into the wrong
+    // variable arrives, and the diagnostic goes to a log.
+    for (const raw of [
+      's'.repeat(5000),
+      'no\u001b[2K\u001b[1Aoperator: fine',
+    ]) {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const exit = vi.spyOn(process, 'exit').mockImplementation((() => {
+        throw new Error('exit');
+      }) as never);
+      expect(() => loadConfig(env({ ELICITATION: raw }))).toThrow('exit');
+      const message = String(error.mock.calls[0]?.[0] ?? '');
+      expect(message.length).toBeLessThan(200);
+      expect(message).not.toContain('\u001b');
+      expect(message).not.toContain('s'.repeat(41));
+      error.mockRestore();
+      exit.mockRestore();
       vi.restoreAllMocks();
     }
   });

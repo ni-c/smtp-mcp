@@ -8,6 +8,14 @@ import { MAX_RESULT_BYTES } from '../src/result.js';
 
 import { call, connect, jsonOf, sendArgs, textOf } from './harness.js';
 
+/** Fifty long addresses at a domain no allowlist covers. */
+function strangers(prefix: string): string[] {
+  return Array.from(
+    { length: 50 },
+    (_, i) => `${prefix}${i}.${'x'.repeat(200)}@evil.example`
+  );
+}
+
 describe('get_server_info', () => {
   it('leads with whether this server can send at all', async () => {
     const harness = await connect();
@@ -199,6 +207,27 @@ describe('preview_mail', () => {
     );
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/SMTP_ALLOWED_RECIPIENTS/);
+    await harness.close();
+  });
+
+  it('names the first refused addresses and counts the rest', async () => {
+    // Fifty addresses of up to 320 characters in each of three fields is
+    // 48 kB, and an error message is not the place for it.
+    const harness = await connect();
+    const result = await call(harness.client, 'preview_mail', {
+      to: strangers('to'),
+      cc: strangers('cc'),
+      bcc: strangers('bcc'),
+      subject: 'x',
+      body: 'x',
+    });
+    expect(result.isError).toBe(true);
+    const text = textOf(result);
+    expect(text).toMatch(/150 recipient\(s\) are not covered/);
+    expect(text).toMatch(/… and 130 more/);
+    expect(text).toContain('to0.');
+    expect(text).not.toContain('cc0.');
+    expect(text.length).toBeLessThan(6000);
     await harness.close();
   });
 

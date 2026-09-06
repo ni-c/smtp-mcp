@@ -10,6 +10,8 @@
  * can send mail to these people".
  */
 
+import { shown } from './errors.js';
+
 /** One entry of `SMTP_ALLOWED_RECIPIENTS`. */
 export type RecipientRule =
   | { kind: 'any' }
@@ -82,7 +84,7 @@ export function parseAllowlist(raw: string | undefined): RecipientRule[] {
       const domain = entry.slice(1);
       if (!/^[a-z0-9.-]+\.[a-z0-9-]+$/.test(domain)) {
         throw new Error(
-          `SMTP_ALLOWED_RECIPIENTS: "${entry}" is not a valid domain entry — ` +
+          `SMTP_ALLOWED_RECIPIENTS: "${shown(entry)}" is not a valid domain entry — ` +
             'write it as "@example.net".'
         );
       }
@@ -90,14 +92,14 @@ export function parseAllowlist(raw: string | undefined): RecipientRule[] {
     }
     if (!entry.includes('@')) {
       throw new Error(
-        `SMTP_ALLOWED_RECIPIENTS: "${entry}" is neither an address nor a ` +
+        `SMTP_ALLOWED_RECIPIENTS: "${shown(entry)}" is neither an address nor a ` +
           'domain. Write "@example.net" for a whole domain, or ' +
           '"person@example.net" for one address.'
       );
     }
     if (!/^[^@\s]+@[a-z0-9.-]+\.[a-z0-9-]+$/.test(entry)) {
       throw new Error(
-        `SMTP_ALLOWED_RECIPIENTS: "${entry}" is not a valid email address.`
+        `SMTP_ALLOWED_RECIPIENTS: "${shown(entry)}" is not a valid email address.`
       );
     }
     return { kind: 'address', address: entry };

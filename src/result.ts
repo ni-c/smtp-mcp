@@ -232,12 +232,24 @@ export function fencedUntrustedResult(
 const MAX_ERROR_BODY_LENGTH = 2000;
 
 /**
+ * C0 and C1 controls and DEL, minus tab, LF and CR.
+ *
+ * An SMTP reply is one line the far side wrote, and it is shown to the model
+ * and, in a terminal, to a person. `ESC[2K ESC[1A` erases the line above it
+ * and writes another in its place; a lone BEL or a NEL is a smaller version of
+ * the same trick. Length and shape were already bounded here — the characters
+ * were not.
+ */
+// eslint-disable-next-line no-control-regex -- matching them is the point
+const CONTROL_CHARS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g;
+
+/**
  * Limits what an upstream error string can inject into the model context: HTML
  * error pages (captive portals, proxies answering on the submission port) are
- * dropped entirely, other bodies are truncated.
+ * dropped entirely, other bodies are truncated, and control characters go.
  */
 export function sanitizeErrorBody(body: string): string {
-  const trimmed = body.trim();
+  const trimmed = body.replace(CONTROL_CHARS, '').trim();
   // Anything markup-shaped: a reverse proxy's error page or a WAF block page.
   // The check is deliberately loose — an XML declaration, a leading comment or
   // a doctype followed by a newline are all the same thing here.

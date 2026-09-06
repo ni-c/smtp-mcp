@@ -8,6 +8,9 @@ import { ToolInputError } from './errors.js';
 import { refusedRecipients } from './recipients.js';
 import { htmlToText } from './sanitize.js';
 
+/** How many refused addresses an error names before counting the rest. */
+const MAX_REFUSED_NAMED = 20;
+
 /** Keeps the first spelling of each address, comparing case-insensitively. */
 function dedupeAddresses(addresses: readonly string[]): string[] {
   const seen = new Set<string>();
@@ -147,9 +150,17 @@ export async function prepareMessage(
 
   const refused = refusedRecipients(all, config.allowedRecipients);
   if (refused.length > 0) {
+    // Named, so the caller can say which — but not all 150 of them. The
+    // schema admits fifty addresses of up to 320 characters in each of three
+    // fields, and an error message is not the place for 48 kB of them.
+    const named = refused.slice(0, MAX_REFUSED_NAMED).join(', ');
+    const rest =
+      refused.length > MAX_REFUSED_NAMED
+        ? `, … and ${refused.length - MAX_REFUSED_NAMED} more`
+        : '';
     throw new ToolInputError(
       `smtp-mcp: refused — ${refused.length} recipient(s) are not covered by ` +
-        `SMTP_ALLOWED_RECIPIENTS: ${refused.join(', ')}. Nothing was sent.`
+        `SMTP_ALLOWED_RECIPIENTS: ${named}${rest}. Nothing was sent.`
     );
   }
 
@@ -286,8 +297,15 @@ export function messageFingerprint(
   // token path the files are read again, so anyone able to write into
   // SMTP_ATTACHMENT_DIR could otherwise swap the contents after approval and
   // before the send. Hashing them makes that a fresh prompt instead.
-  for (const attachment of prepared.attachments)
+  //
+  // Each one length-prefixed. Bytes fed to a hash one file after another have
+  // no boundary between them, so `AB` + `C` and `A` + `BC` digested to the
+  // same value — and the same writer could move the end of one approved file
+  // to the start of the next without the fingerprint noticing.
+  for (const attachment of prepared.attachments) {
+    content.update(`${attachment.content.length}\0`);
     content.update(attachment.content);
+  }
   const digest = content.digest('hex').slice(0, 32);
 
   // The three recipient fields are hashed separately rather than folded into

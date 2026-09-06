@@ -196,6 +196,16 @@ describe('sanitizeErrorBody', () => {
       '550 5.1.1 unknown user'
     );
   });
+
+  it('strips the control characters that rewrite the line they land on', () => {
+    // `ESC[2K ESC[1A` erases the line above and prints another in its place;
+    // BEL and NEL are smaller versions of the same trick. The reply was
+    // bounded in length and shape, not in what characters it carried.
+    expect(
+      sanitizeErrorBody('550 \u001b[2K\u001b[1ANot you\u0007, the server\u0085')
+    ).toBe('550 [2K[1ANot you, the server');
+    expect(sanitizeErrorBody('550 a\tb\u007fc')).toBe('550 a\tbc');
+  });
 });
 
 describe('run', () => {

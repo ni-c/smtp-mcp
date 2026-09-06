@@ -1,4 +1,5 @@
 import { internalHostKind } from 'mcp-internal-hosts';
+import { shown } from './errors.js';
 import { parseAllowlist, type RecipientRule } from './recipients.js';
 
 /** How the connection to the SMTP server is encrypted. */
@@ -315,7 +316,7 @@ export function parseElicitation(raw: string | undefined): boolean {
   if (value === undefined || value === '' || value === 'true') return true;
   if (value === 'false') return false;
   console.error(
-    `smtp-mcp: ELICITATION must be "true" or "false" — got "${raw}". ` +
+    `smtp-mcp: ELICITATION must be "true" or "false" — got "${shown(raw ?? '')}". ` +
       'Refusing to start rather than guess.'
   );
   process.exit(1);
