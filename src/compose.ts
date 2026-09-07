@@ -185,7 +185,10 @@ export async function composeMessage(
     );
   }
 
+  const replyTo = config.smtp.replyTo;
+
   assertHeaderSafe('From', from);
+  if (replyTo !== undefined) assertHeaderSafe('Reply-To', replyTo);
   assertHeaderSafe('Subject', input.subject);
   for (const address of [...input.to, ...input.cc, ...input.bcc]) {
     assertHeaderSafe('To', address);
@@ -213,6 +216,12 @@ export async function composeMessage(
 
   const composer = new MailComposer({
     from,
+    // A header and only a header. It does not join the envelope below and it is
+    // not checked against the allowlist, because it addresses nothing this
+    // server will contact: it is an instruction to the recipient's mail client
+    // about where *they* should write. The allowlist governs who this server
+    // writes to, and a Reply-To does not make it write anywhere.
+    ...(replyTo === undefined ? {} : { replyTo }),
     to: input.to,
     ...(input.cc.length > 0 ? { cc: input.cc } : {}),
     ...(input.bcc.length > 0 ? { bcc: input.bcc } : {}),

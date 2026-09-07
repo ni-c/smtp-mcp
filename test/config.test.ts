@@ -180,6 +180,48 @@ describe('loadConfig', () => {
     expect(errors.mock.calls.flat().join(' ')).toContain('SMTP_FROM');
   });
 
+  it('leaves the reply address unset unless it is configured', () => {
+    // Unset has to mean "no Reply-To header at all" rather than "the sender":
+    // a Reply-To repeating the From address is a header that says nothing, and
+    // some filters read a redundant one as a sign of a forged message.
+    const config = loadConfig(env());
+    expect(config.smtp.replyTo).toBeUndefined();
+    expect(config.smtp.replyToAddress).toBeUndefined();
+  });
+
+  it('parses the reply address in both accepted forms', () => {
+    expect(
+      loadConfig(env({ SMTP_REPLY_TO: 'team@example.net' })).smtp.replyTo
+    ).toBe('team@example.net');
+    const named = loadConfig(
+      env({ SMTP_REPLY_TO: 'The Team <team@example.net>' })
+    ).smtp;
+    // The header keeps the display name; only the parsed address drops it.
+    expect(named.replyTo).toBe('The Team <team@example.net>');
+    expect(named.replyToAddress).toBe('team@example.net');
+  });
+
+  it('refuses a reply address that is not an address, without echoing it', () => {
+    const { errors, exit } = expectExit();
+    expect(() =>
+      loadConfig(env({ SMTP_REPLY_TO: 'reply to me at secret@example.net' }))
+    ).toThrow('exit');
+    expect(exit).toHaveBeenCalledWith(1);
+    const said = errors.mock.calls.flat().join(' ');
+    expect(said).toContain('SMTP_REPLY_TO');
+    expect(said).not.toContain('secret@example.net');
+  });
+
+  it('refuses a reply address carrying a line break', () => {
+    // The header injection this closes: everything after the CRLF would become
+    // a header of its own, a Bcc among them.
+    const { exit } = expectExit();
+    expect(() =>
+      loadConfig(env({ SMTP_REPLY_TO: 'a@example.net\r\nBcc: b@example.org' }))
+    ).toThrow('exit');
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
   it('refuses to enable sending without an allowlist', () => {
     // Treating an unset allowlist as "anyone" is the accident this prevents: it
     // reads as a missing line rather than as a decision, and the failure it
@@ -296,6 +338,15 @@ describe('missingConfigMessage', () => {
     expect(message).toContain('SMTP_FROM');
     expect(message).toContain('SMTP_ALLOW_SEND');
     expect(message).toContain('SMTP_ALLOWED_RECIPIENTS');
+  });
+
+  it('names the optional variables too, so the list is the documentation', () => {
+    // This message is what an operator sees on a server that will not start,
+    // often the only place they look. A variable missing from it is a variable
+    // most of them never find out about.
+    const message = missingConfigMessage(['SMTP_HOST']);
+    expect(message).toContain('SMTP_REPLY_TO');
+    expect(message).toContain('SMTP_SIGNATURE');
   });
 });
 

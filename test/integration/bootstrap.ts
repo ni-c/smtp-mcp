@@ -66,6 +66,9 @@ export async function bootstrap(): Promise<Sandbox> {
       SMTP_ALLOWED_RECIPIENTS: '@example.net',
       SMTP_ATTACHMENT_DIR: attachmentDir,
       SMTP_SIGNATURE: 'Sent from the smtp-mcp integration suite',
+      // A different mailbox from SMTP_FROM, so a test can tell the Reply-To
+      // header apart from a From the client echoed back.
+      SMTP_REPLY_TO: 'Sandbox Replies <replies@example.net>',
     },
   };
 }
@@ -95,6 +98,7 @@ export interface Summary {
 export interface Delivered {
   Subject: string;
   From: { Address: string };
+  ReplyTo: { Address: string }[];
   To: { Address: string }[];
   Cc: { Address: string }[];
   Text: string;

@@ -242,6 +242,16 @@ async function withSlot(
     },
     ...linesFor('To', prepared.to),
   ];
+  if (ctx.config.smtp.replyTo !== undefined) {
+    // Shown next to the sender, and shown at all for the same reason the Bcc
+    // line below exists: this is where the answer goes. A person approving a
+    // message reads the From line as "this is from me", and a Reply-To they
+    // were not told about quietly makes that half true.
+    details.push({
+      label: 'Reply-To (fixed by SMTP_REPLY_TO)',
+      value: ctx.config.smtp.replyTo,
+    });
+  }
   if (prepared.cc.length > 0) {
     details.push(...linesFor('Cc', prepared.cc));
   }

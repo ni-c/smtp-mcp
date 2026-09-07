@@ -16,6 +16,7 @@ with setup instructions instead of reaching a server.
 | `SMTP_USER` | yes | `string` | Username for SMTP authentication. |
 | `SMTP_PASSWORD` | yes | `string` | Password or app-specific password for SMTP authentication. |
 | `SMTP_FROM` | yes | `string` | The only sender this server will use, e.g. "Name &lt;person@example.net&gt;". There is no from parameter. |
+| `SMTP_REPLY_TO` | no | `string` | Reply-To header on every message, e.g. "Team &lt;team@example.net&gt;". Unset means no Reply-To header and replies go to SMTP_FROM. There is no reply_to parameter. |
 | `SMTP_ALLOW_SEND` | no | `boolean` | Set to "true" to register the sending tools. Defaults to false: the server cannot send until it is set. |
 | `SMTP_ALLOWED_RECIPIENTS` | no | `string` | Comma-separated addresses and @domains this server may write to. Required with SMTP_ALLOW_SEND=true; "*" allows any. |
 | `SMTP_MAX_RECIPIENTS` | no | `number` | Maximum distinct recipients across To, Cc and Bcc in one message. Default 10. |
@@ -49,7 +50,7 @@ looks like it is running and is not doing what its operator believes:
 - a host carrying a scheme, a port, credentials or a line break
 - a port outside 1–65535, or a non-positive limit
 - an `SMTP_TLS` value other than `starttls`, `implicit` or `none`
-- an `SMTP_FROM` that is not an email address
+- an `SMTP_FROM` or `SMTP_REPLY_TO` that is not an email address
 - an entry in `SMTP_ALLOWED_RECIPIENTS` that is neither an address nor an `@domain`
 - `SMTP_ALLOW_SEND=true` with no allowlist
 - a tool name in `SMTP_ALLOW_TOOLS` or `SMTP_DENY_TOOLS` that matches nothing
