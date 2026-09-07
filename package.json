@@ -54,7 +54,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
-    "mcp-approval": "^0.8.1",
+    "mcp-approval": "^0.8.2",
     "mcp-internal-hosts": "^0.2.1",
     "mcp-tool-allowlist": "^0.2.1",
     "nodemailer": "^9.1.0",
