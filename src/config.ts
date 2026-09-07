@@ -24,6 +24,24 @@ export interface SmtpConfig {
   from: string | undefined;
   /** The bare address out of {@link from}, used as the envelope sender. */
   fromAddress: string | undefined;
+  /**
+   * The Reply-To header, in the same display forms as {@link from}. Unset means
+   * no Reply-To header at all, and replies go to the From address.
+   *
+   * Operator configuration for the same reason {@link from} is, and the reason
+   * is worth stating separately because this header is easier to overlook: it
+   * is where a reply *goes*. A model that could set it per message could route
+   * the answer to a conversation the operator started away from the operator,
+   * to an address the recipient never reads, and nothing about the delivered
+   * message would look wrong.
+   */
+  replyTo: string | undefined;
+  /**
+   * The bare address out of {@link replyTo}. Kept only because parsing it is
+   * how the value is validated — no envelope is built from it, see
+   * `composeMessage`.
+   */
+  replyToAddress: string | undefined;
 }
 
 export interface Config {
@@ -135,6 +153,7 @@ export function missingConfigMessage(missing: string[]): string {
     'Optional: SMTP_PORT, SMTP_TLS (starttls|implicit|none), ' +
     'SMTP_ALLOW_SEND=true to expose the sending tools (it defaults to false), ' +
     'SMTP_ALLOWED_RECIPIENTS (required with SMTP_ALLOW_SEND=true), ' +
+    'SMTP_REPLY_TO to point replies at another address, ' +
     'SMTP_MAX_RECIPIENTS, SMTP_MAX_SENDS_PER_HOUR, SMTP_ATTACHMENT_DIR to ' +
     'allow attachments, SMTP_SIGNATURE, SMTP_AUDIT_LOG, SMTP_ALLOW_TOOLS / ' +
     'SMTP_DENY_TOOLS to narrow the tool list, SMTP_INSECURE_TLS=true to accept ' +
@@ -188,7 +207,20 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   const from = env.SMTP_FROM?.trim() || undefined;
   if (from !== undefined) assertSingleLine(from, 'SMTP_FROM');
-  const fromAddress = from === undefined ? undefined : parseFromAddress(from);
+  const fromAddress =
+    from === undefined ? undefined : parseAddressHeader(from, 'SMTP_FROM');
+
+  // Fatal on a malformed value, where the signature length above only exits and
+  // `SMTP_FROM` missing only warns. The difference is what a mistake costs: a
+  // Reply-To that was meant to be set and silently is not produces messages
+  // whose replies go somewhere nobody is reading, and the operator finds out
+  // when somebody asks why they were ignored.
+  const replyTo = env.SMTP_REPLY_TO?.trim() || undefined;
+  if (replyTo !== undefined) assertSingleLine(replyTo, 'SMTP_REPLY_TO');
+  const replyToAddress =
+    replyTo === undefined
+      ? undefined
+      : parseAddressHeader(replyTo, 'SMTP_REPLY_TO');
 
   const signature = env.SMTP_SIGNATURE || undefined;
   if (signature !== undefined && signature.length > DEFAULT_SIGNATURE_MAX) {
@@ -227,6 +259,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       insecureTls: env.SMTP_INSECURE_TLS === 'true',
       from,
       fromAddress,
+      replyTo,
+      replyToAddress,
     },
     // Defaults to false — see the field comment.
     allowSend: env.SMTP_ALLOW_SEND === 'true',
@@ -373,19 +407,24 @@ function parseTypes(raw: string | undefined): string[] {
 }
 
 /**
- * Pulls the bare address out of a From header value.
+ * Pulls the bare address out of an address header value.
  *
- * The envelope sender has to be an address and nothing else; the display name
- * only belongs in the header. Getting this wrong produces a MAIL FROM the
- * server rejects with a message about syntax, three layers away from the
- * variable that caused it.
+ * For `SMTP_FROM` the result is the envelope sender, which has to be an address
+ * and nothing else; the display name only belongs in the header. Getting this
+ * wrong produces a MAIL FROM the server rejects with a message about syntax,
+ * three layers away from the variable that caused it. For `SMTP_REPLY_TO`
+ * nothing downstream needs the bare address — parsing it is the validation.
+ *
+ * The value never appears in the message: it is a mailbox address, and the
+ * error text is read by whoever is looking at a server that will not start,
+ * which is not always the person who owns the mailbox.
  */
-function parseFromAddress(value: string): string {
+function parseAddressHeader(value: string, name: string): string {
   const angled = /<([^<>]+)>\s*$/.exec(value);
   const address = (angled?.[1] ?? value).trim();
   if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(address)) {
     console.error(
-      'smtp-mcp: SMTP_FROM must be an email address, either bare ' +
+      `smtp-mcp: ${name} must be an email address, either bare ` +
         '(person@example.net) or with a display name ' +
         '(Person Name <person@example.net>)'
     );

@@ -11,7 +11,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      last in the file so the link definitions come along. -->
 <!-- #region changelog -->
 
-## [Unreleased]
+## [0.2.0] - 2026-09-07
+
+### Security
+
+- **mcp-approval 0.8.2.** A sealed dialog answer is single-use since 0.8.1: the
+  same `requestState` presented again within its lifetime used to be accepted
+  again, and with a resource key that is the same every time — a whole stream, a
+  fixed set of targets — every replay landed. 0.1.2 already shipped 0.8.1 with
+  that fix; 0.8.2 adds `orderedResourceKey`, which this server does not need
+  (its key is a single message fingerprint) but the fleet pins one version.
+
+### Added
+
+- `SMTP_REPLY_TO` puts a Reply-To header on every message this server sends, in
+  the same two forms `SMTP_FROM` accepts: `team@example.net` or
+  `Team <team@example.net>`. It is for the deployment where the mailbox that
+  sends is not the mailbox that should be answered — a `noreply` account, or an
+  automation writing on behalf of a team. Unset, and that remains the default,
+  there is no Reply-To header at all and replies go to the sender; a Reply-To
+  repeating the From address adds nothing and reads as forgery to some filters.
+  A malformed value stops the server rather than being dropped, because a reply
+  address that silently is not set is discovered when somebody asks why they
+  were ignored. Like the sender it is operator configuration and has no tool
+  parameter: a model that could set one per message could route the answer to a
+  conversation you started away from you, and nothing about the delivered
+  message would look wrong. It is a header and only a header — it does not join
+  the SMTP envelope and is not checked against `SMTP_ALLOWED_RECIPIENTS`,
+  because it addresses nobody this server will contact. When it is set, the
+  approval dialog carries it on its own line under the sender, and
+  `get_server_info` reports it as `reply_to`.
 
 ## [0.1.2] - 2026-09-06
 

@@ -8,12 +8,12 @@
     "url": "https://github.com/ni-c/smtp-mcp",
     "source": "github"
   },
-  "version": "0.1.2",
+  "version": "0.2.0",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@ni-c/smtp-mcp",
-      "version": "0.1.2",
+      "version": "0.2.0",
       "transport": {
         "type": "stdio"
       },
@@ -51,6 +51,11 @@
           "name": "SMTP_FROM",
           "description": "The only sender this server will use, e.g. \"Name <person@example.net>\". There is no from parameter.",
           "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "SMTP_REPLY_TO",
+          "description": "Reply-To header on every message, e.g. \"Team <team@example.net>\". Unset means no Reply-To header and replies go to SMTP_FROM. There is no reply_to parameter.",
           "format": "string"
         },
         {
@@ -160,6 +165,11 @@
           "name": "SMTP_FROM",
           "description": "The only sender this server will use, e.g. \"Name <person@example.net>\". There is no from parameter.",
           "isRequired": true,
+          "format": "string"
+        },
+        {
+          "name": "SMTP_REPLY_TO",
+          "description": "Reply-To header on every message, e.g. \"Team <team@example.net>\". Unset means no Reply-To header and replies go to SMTP_FROM. There is no reply_to parameter.",
           "format": "string"
         },
         {

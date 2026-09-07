@@ -83,6 +83,7 @@ message they wrote.
 | `SMTP_USER`                 | yes                         | —                            | Username for SMTP authentication.                                                                 |
 | `SMTP_PASSWORD`             | yes                         | —                            | Password or app-specific password.                                                                |
 | `SMTP_FROM`                 | yes                         | —                            | The only sender used, e.g. `Name <person@example.net>`. There is no `from` parameter.             |
+| `SMTP_REPLY_TO`             | no                          | —                            | Reply-To on every message, e.g. `Team <team@example.net>`. Unset means replies go to `SMTP_FROM`. |
 | `SMTP_PORT`                 | no                          | 587 / 465 / 25               | Depends on `SMTP_TLS`.                                                                            |
 | `SMTP_TLS`                  | no                          | `starttls`                   | `starttls`, `implicit` or `none`. Never opportunistic.                                            |
 | `SMTP_ALLOW_SEND`           | no                          | `false`                      | Set to `true` to register the sending tools.                                                      |

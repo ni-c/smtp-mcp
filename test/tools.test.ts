@@ -6,7 +6,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MAX_RESULT_BYTES } from '../src/result.js';
 
-import { call, connect, jsonOf, sendArgs, textOf } from './harness.js';
+import {
+  call,
+  connect,
+  jsonOf,
+  sendArgs,
+  testConfig,
+  textOf,
+} from './harness.js';
 
 /** Fifty long addresses at a domain no allowlist covers. */
 function strangers(prefix: string): string[] {
@@ -36,6 +43,38 @@ describe('get_server_info', () => {
     expect(info.from).toBe('Me <me@example.net>');
     expect(info.from_is_fixed).toBe(true);
     await harness.close();
+  });
+
+  it('reports where replies go, and null when that is the sender', async () => {
+    const plain = await connect();
+    expect(
+      (
+        jsonOf(await call(plain.client, 'get_server_info')) as Record<
+          string,
+          unknown
+        >
+      ).reply_to
+    ).toBeNull();
+    await plain.close();
+
+    const redirected = await connect({
+      config: {
+        smtp: {
+          ...testConfig().smtp,
+          replyTo: 'The Team <team@example.net>',
+          replyToAddress: 'team@example.net',
+        },
+      },
+    });
+    expect(
+      (
+        jsonOf(await call(redirected.client, 'get_server_info')) as Record<
+          string,
+          unknown
+        >
+      ).reply_to
+    ).toBe('The Team <team@example.net>');
+    await redirected.close();
   });
 
   it('describes the allowlist and the limits', async () => {

@@ -112,6 +112,12 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
           .describe('The one address this can send as.')
           .nullable(),
         from_is_fixed: z.literal(true),
+        reply_to: z
+          .string()
+          .describe(
+            'Where replies are directed. Null means replies go to `from`.'
+          )
+          .nullable(),
         allowed_recipients: z.string(),
         limits: z.object({
           max_recipients_per_message: z.number().int(),
@@ -154,6 +160,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
           },
           from: config.smtp.from ?? null,
           from_is_fixed: true,
+          reply_to: config.smtp.replyTo ?? null,
           allowed_recipients: describeAllowlist(config.allowedRecipients),
           limits: {
             max_recipients_per_message: config.maxRecipients,

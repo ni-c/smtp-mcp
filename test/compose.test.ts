@@ -69,6 +69,60 @@ describe('composeMessage', () => {
     expect(composed.envelope.to).toContain('secret@example.net');
   });
 
+  it('writes no Reply-To header unless one is configured', async () => {
+    expect(headerBlock((await compose()).raw)).not.toContain('Reply-To');
+  });
+
+  it('writes the configured Reply-To exactly once, keeping the display name', async () => {
+    const composed = await compose(
+      {},
+      testConfig({
+        smtp: {
+          ...testConfig().smtp,
+          replyTo: 'The Team <team@example.net>',
+          replyToAddress: 'team@example.net',
+        },
+      })
+    );
+    const headers = headerBlock(composed.raw);
+    expect(headers).toContain('Reply-To: The Team <team@example.net>');
+    expect(headers.match(/^Reply-To:/gm)).toHaveLength(1);
+  });
+
+  it('keeps the Reply-To out of the envelope', async () => {
+    // The point of the header: it tells the recipient's client where to write,
+    // and changes nothing about who this server delivers to. If it reached the
+    // envelope it would become a recipient — one the allowlist never saw.
+    const composed = await compose(
+      {},
+      testConfig({
+        smtp: {
+          ...testConfig().smtp,
+          replyTo: 'team@example.net',
+          replyToAddress: 'team@example.net',
+        },
+      })
+    );
+    expect(composed.envelope.to).toEqual(['anna@example.net']);
+    expect(composed.envelope.from).toBe('me@example.net');
+  });
+
+  it('encodes a non-ASCII Reply-To display name rather than sending raw UTF-8', async () => {
+    const composed = await compose(
+      {},
+      testConfig({
+        smtp: {
+          ...testConfig().smtp,
+          replyTo: 'Grüße <team@example.net>',
+          replyToAddress: 'team@example.net',
+        },
+      })
+    );
+    const headers = headerBlock(composed.raw);
+    expect(headers).toMatch(/Reply-To: =\?/);
+    expect(headers).not.toContain('Grüße');
+  });
+
   it('builds the envelope from the address lists, not from the headers', async () => {
     const composed = await compose({
       to: ['anna@example.net'],

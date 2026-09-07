@@ -40,6 +40,31 @@ own sender can write in a colleague's name, and the message that results is indi
 from one they wrote. The envelope sender is the bare address out of this value, so SPF and DKIM
 line up with what the recipient sees.
 
+## Where replies go
+
+`SMTP_REPLY_TO` puts a Reply-To header on every message this server sends, in the same two forms:
+
+```sh
+SMTP_REPLY_TO='team@example.net'
+SMTP_REPLY_TO='Your Team <team@example.net>'
+```
+
+Unset — the default — there is no Reply-To header at all and replies go to `SMTP_FROM`. That is
+deliberately not the same as a Reply-To repeating the sender: a header that adds nothing is a
+header some filters read as a sign of forgery.
+
+Set it when the mailbox that sends is not the mailbox that should be answered — a `noreply` or
+an automation account writing on behalf of a team, say. It is a header and nothing more: it does
+not join the SMTP envelope, it is not checked against `SMTP_ALLOWED_RECIPIENTS`, and it does not
+make this server contact anybody. It tells the recipient's mail client where **they** should
+write.
+
+Like the sender it is operator configuration, and for a sharper version of the same reason.
+There is no `reply_to` tool parameter. A model that could set one per message could route the
+answer to a conversation you started away from you, and nothing about the delivered message
+would look wrong. When it is set, the approval dialog shows it on its own line under the sender,
+so the person approving a message can see where the reply will land.
+
 ## Turning sending on
 
 ```sh

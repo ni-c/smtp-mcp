@@ -31,7 +31,10 @@ This server **is** the third condition. So it narrows it instead:
 - **A human confirmation on every message**, delivered as an MCP elicitation so the model cannot
   answer it.
 - **An hourly cap**, which bounds a successful attack to a number of messages.
-- **No caller-chosen sender.**
+- **No caller-chosen sender**, and no caller-chosen Reply-To either. Both are operator
+  configuration. The second is the quieter of the two: a per-message Reply-To would let a model
+  route the answer to a conversation you started away from you, and the delivered message would
+  look entirely ordinary.
 
 ## Two servers, on purpose
 

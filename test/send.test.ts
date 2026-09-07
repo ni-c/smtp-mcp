@@ -10,6 +10,7 @@ import {
   connectModern,
   jsonOf,
   sendArgs,
+  testConfig,
   textOf,
   tokenOf,
   type Harness,
@@ -298,6 +299,38 @@ describe('send_mail, the elicitation dialog', () => {
     });
     await call(harness.client, 'send_mail', sendArgs());
     expect(harness.prompts.join('\n')).toMatch(/From \(fixed by SMTP_FROM\)/);
+    await harness.close();
+  });
+
+  it('names the reply address in the dialog when one is configured', async () => {
+    // A person approving a message reads the From line as "this is from me".
+    // A Reply-To they were not told about makes that only half true, and it is
+    // the half that decides where the answer lands.
+    const harness = await connect({
+      config: {
+        allowSend: true,
+        smtp: {
+          ...testConfig().smtp,
+          replyTo: 'The Team <team@example.net>',
+          replyToAddress: 'team@example.net',
+        },
+      },
+      elicit: 'accept',
+    });
+    await call(harness.client, 'send_mail', sendArgs());
+    const prompt = harness.prompts.join('\n');
+    expect(prompt).toMatch(/Reply-To \(fixed by SMTP_REPLY_TO\)/);
+    expect(prompt).toContain('The Team <team@example.net>');
+    await harness.close();
+  });
+
+  it('leaves the reply line out of the dialog when none is configured', async () => {
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    await call(harness.client, 'send_mail', sendArgs());
+    expect(harness.prompts.join('\n')).not.toMatch(/Reply-To/);
     await harness.close();
   });
 

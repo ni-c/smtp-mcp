@@ -196,6 +196,10 @@ describe('the preview', () => {
       .map((part) => part.text ?? '')
       .join('');
     expect(preview).toContain('From: Sandbox');
+    // The header block comes out of the composed bytes, so the Reply-To the
+    // operator configured is in the preview for the same reason it is on the
+    // wire: there is one composition path and this is it.
+    expect(preview).toContain('Reply-To: Sandbox Replies');
     expect(preview).toContain('X-Mailer: smtp-mcp/');
     // The sanitiser's work, visible before anything is committed — as data.
     // It names the scheme the caller wrote before a colon, so it belongs in a
@@ -273,6 +277,14 @@ describe('sending, and what actually arrived', () => {
     expect(wire).toContain(sent.message_id);
     expect(wire).toMatch(/^X-Mailer: smtp-mcp\//m);
     expect(message.Text).toContain('Sent from the smtp-mcp integration suite');
+
+    // The Reply-To crossed the wire and points somewhere other than the sender,
+    // which is the whole of what SMTP_REPLY_TO promises. Read off the parsed
+    // message rather than the bytes: this is what a mail client will act on
+    // when the recipient presses reply.
+    expect(message.ReplyTo).toHaveLength(1);
+    expect(message.ReplyTo[0]!.Address).toBe('replies@example.net');
+    expect(message.From.Address).toBe('sandbox@example.net');
 
     // None of them survived the sanitiser, and this is the only place that can
     // be checked on the bytes that were actually transmitted. `hidden.gif`,
