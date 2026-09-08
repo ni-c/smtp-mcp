@@ -57,7 +57,7 @@
     "mcp-approval": "^0.8.2",
     "mcp-internal-hosts": "^0.2.1",
     "mcp-tool-allowlist": "^0.2.1",
-    "nodemailer": "^9.1.0",
+    "nodemailer": "^10.0.0",
     "zod": "^4.5.4"
   },
   "devDependencies": {
