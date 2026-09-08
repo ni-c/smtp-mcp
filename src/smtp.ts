@@ -69,10 +69,14 @@ export function transportOptions(config: SmtpConfig): SMTPTransport.Options {
     // And "none" means none, not "encrypt if it happens to be offered". A mode
     // whose behaviour depends on the peer is a mode nobody can reason about.
     ignoreTLS: config.tls === 'none',
-    auth:
-      config.user === undefined || config.password === undefined
-        ? undefined
-        : { user: config.user, pass: config.password },
+    // Spread rather than `auth: undefined`: nodemailer 10 declares `auth` as an
+    // optional property without `| undefined`, and under
+    // `exactOptionalPropertyTypes` an explicit `undefined` is not the same as an
+    // absent key. Omitting the key is also what the option means — no
+    // credentials, no AUTH command.
+    ...(config.user === undefined || config.password === undefined
+      ? {}
+      : { auth: { user: config.user, pass: config.password } }),
     // The library can log the whole SMTP dialogue — message bodies included —
     // to stdout. stdout is the MCP transport, so this is not optional.
     logger: false,

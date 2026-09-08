@@ -11,6 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
      last in the file so the link definitions come along. -->
 <!-- #region changelog -->
 
+## [Unreleased]
+
+### Changed
+
+- nodemailer 10. Its `SMTPTransport.Options` now declares `auth` as an optional
+  property without `| undefined`, so the transport options omit the key when
+  there are no credentials instead of setting it to `undefined` — which is what
+  the option already meant: no credentials, no AUTH command. No behaviour
+  changes; `tls` was built the same way already.
+
 ## [0.2.0] - 2026-09-07
 
 ### Security
