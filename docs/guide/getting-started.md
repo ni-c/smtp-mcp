@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Node.js 22 or newer
+- Node.js 24 or newer
 - An SMTP account you may send from — a submission server on port 587 or 465, with a username and
   password. Providers with two-factor authentication generally need an app-specific password
   rather than the account password.
