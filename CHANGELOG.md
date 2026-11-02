@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   there are no credentials instead of setting it to `undefined` — which is what
   the option already meant: no credentials, no AUTH command. No behaviour
   changes; `tls` was built the same way already.
+- Require Node.js 24 or newer. CI tests the latest 24 and 26 LTS releases; Node 22 is no longer supported.
 
 ## [0.2.0] - 2026-09-07
 

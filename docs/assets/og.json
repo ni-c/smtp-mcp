@@ -5,5 +5,5 @@
     "Send mail from an assistant",
     "with a person approving every message"
   ],
-  "badges": ["7 tools", "MIT", "Node ≥22"]
+  "badges": ["7 tools", "MIT"]
 }
