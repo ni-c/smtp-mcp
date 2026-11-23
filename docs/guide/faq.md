@@ -72,25 +72,38 @@ If the server reports a TLS failure on port 587, it is doing its job: `starttls`
 upgrade, so a server that does not offer it produces a failed connection rather than a cleartext
 session.
 
-## My HTML arrived changed
+## Where did the `html` parameter go?
 
-Scripts, event handlers, remotely loaded images and `javascript:`/`data:` URLs are removed before
-sending. "Remotely loaded" covers `src`, `srcset`, `imagesrcset`, `poster` and `background`.
-`preview_mail` lists exactly what would be removed, and the confirmation dialog says so too — the
-alteration is never silent.
+It was replaced in 0.3.0 by `format: "markdown"`. Write the body in Markdown and set the format;
+the message gets an HTML part rendered from it, and the body itself goes out as the plain-text
+part. HTML written by the caller is no longer accepted — see
+[Security](/guide/security#formatted-messages) for why.
 
-Links are not touched. If a legitimate image disappeared, it was loaded from a remote URL, which
-is indistinguishable from a tracking pixel; attach it instead.
+## My Markdown link shows its address instead of its text
 
-## My HTML was refused instead of cleaned
+The link text named a different host or address than the link points to, the link points at an
+internationalised domain, or the text contains invisible or direction-changing characters. Any
+of those can make a link look like it goes somewhere it does not, so the HTML part shows the real
+destination. `preview_mail` reports it in `notes`.
 
-The message still contained a `<script>`, `<style>`, `<iframe>`, `<object>`, `<embed>`,
-`<applet>`, `<form>`, `<svg>` or `<math>` after every removal pass had run. That means the markup
-could not be cleaned with confidence — the usual cause is an unterminated quote in an attribute
-value — and for outgoing mail the server stops rather than guessing. A message that never left
-can be fixed; one that arrived with a script in it cannot be recalled.
+## My Markdown link or image came out as plain text
 
-Remove the element and send again.
+Only `https`, `http` and a single plain `mailto` address become links. A relative path, a
+`javascript:` or `data:` URL, credentials in the URL or a `mailto` with `?cc=` or `?body=` stay as
+the text that was written. Images always become links to the image. Reference-style links (`[text][label]`
+with a `[label]: …` line elsewhere) are not supported; write the destination inline.
+
+## My Markdown was refused for linking to too many hosts
+
+Each host the HTML part links to gets a line of its own in the confirmation, and at most twenty
+fit. A message linking to more different hosts is refused rather than shown in part. Split it,
+or send the links as plain text.
+
+## My Markdown was refused
+
+Either it is over 100 000 characters (a plain-text body may be 500 000), or it nests block quotes
+and lists deeper than the renderer follows. Past that depth the HTML part would silently lack the
+rest of the text, so the message is refused instead. Flatten it, or send it as `format: "text"`.
 
 ## My subject was refused as an "encoded-word"
 
@@ -104,7 +117,7 @@ composition.
 
 ## It says my message was "already sent"
 
-An identical message — same recipients, subject, body, quote, HTML and attachments — was accepted
+An identical message — same recipients, subject, body, format, quote and attachments — was accepted
 by the SMTP server a few minutes ago, so this call returned that Message-ID instead of sending a
 second copy. Nobody was asked again and no quota was spent.
 

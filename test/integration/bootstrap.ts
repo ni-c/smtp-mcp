@@ -102,6 +102,8 @@ export interface Delivered {
   To: { Address: string }[];
   Cc: { Address: string }[];
   Text: string;
+  /** The text/html part as Mailpit received it; empty when there is none. */
+  HTML: string;
   Attachments: { FileName: string; ContentType: string }[];
 }
 

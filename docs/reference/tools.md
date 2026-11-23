@@ -69,7 +69,7 @@ into a locked mailbox.
 All three ask a person to confirm before acting, using MCP elicitation, and fall back to a
 two-call token where the client cannot show a dialog. All three are annotated `destructiveHint`,
 because a message cannot be recalled. The dialog lists the recipients, the subject, the body, the
-quoted original and the HTML part — each caller-chosen value on its own labelled line, cut to 200
+quoted original and, for a Markdown body, every host it links to — each caller-chosen value on its own labelled line, cut to 200
 characters, with its full length in the label.
 
 A message the SMTP server has already accepted is not sent a second time: an identical call
@@ -86,8 +86,8 @@ spends no quota.
 | `cc`            | `string[]` | no       | Visible to everyone who receives the message.                       |
 | `bcc`           | `string[]` | no       | Hidden from the others. Shown separately in the confirmation.       |
 | `subject`       | `string`   | yes      | One line, up to 255 characters.                                     |
-| `body`          | `string`   | yes      | Plain-text body.                                                    |
-| `html`          | `string`   | no       | HTML alternative. Sanitised; removals are reported.                 |
+| `body`          | `string`   | yes      | Plain text, or Markdown when `format` is `markdown`.                |
+| `format`        | `string`   | no       | `text` (default) or `markdown`: adds an HTML part rendered from the body. |
 | `attachments`   | `string[]` | no       | File names inside `SMTP_ATTACHMENT_DIR`.                            |
 | `confirm_token` | `string`   | no       | From a previous call with the same arguments. Omit on the first.    |
 

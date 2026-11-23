@@ -5,9 +5,7 @@ import {
   addressParam,
   attachmentsParam,
   bccParam,
-  bodyParam,
   ccParam,
-  htmlParam,
   messageIdParam,
   quoteParam,
   referencesParam,
@@ -16,6 +14,7 @@ import {
 } from '../schema.js';
 
 import { sanitizeText } from '../analyze.js';
+import { bodyParam, formatParam } from '../compose-body.js';
 import { READ_ONLY } from './annotations.js';
 import { allowedExtensions } from '../attachments.js';
 import { missingConfigKeys } from '../config.js';
@@ -57,7 +56,7 @@ function renderPreview(
   lines.push('--- text/plain ---');
   lines.push(sanitizeText(prepared.composed.textBody));
   if (htmlBody !== undefined) {
-    lines.push('', '--- text/html (after sanitising) ---');
+    lines.push('', '--- text/html (rendered from the Markdown body) ---');
     lines.push(sanitizeText(htmlBody));
   }
   if (prepared.attachments.length > 0) {
@@ -272,7 +271,7 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
         bcc: bccParam,
         subject: subjectParam,
         body: bodyParam,
-        html: htmlParam,
+        format: formatParam,
         quote: quoteParam,
         in_reply_to: messageIdParam.optional(),
         references: referencesParam,
@@ -293,28 +292,46 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
           .int()
           .describe('Invisible to the other recipients.'),
         bytes: z.number().int(),
-        html_removed: z
+        format: z
+          .enum(['text', 'markdown'])
+          .describe(
+            'Plain text only, or plain text plus a rendered HTML part.'
+          ),
+        notes: z
           .array(z.string())
-          .describe('What the HTML sanitiser took out.'),
+          .describe(
+            'What rendering the Markdown changed, such as a link shown by its destination.'
+          ),
         suspicious: z
           .array(z.string())
           .describe(
             'Prompt-injection shapes matched anywhere in the caller-supplied text.'
           ),
         suspicious_in: z
-          .array(z.enum(['quote', 'body', 'html']))
+          .array(z.enum(['quote', 'body']))
           .describe(
             'Which fields matched. "quote" is a forwarded message giving orders; ' +
-              '"body" or "html" is this message giving them.'
+              '"body" is this message giving them.'
           ),
-        text_html_diverge: z
-          .boolean()
+        truncated: z
+          .object({
+            reason: z.string(),
+            returned_items: z.number().int(),
+            omitted_items: z.number().int(),
+            follow_up: z.string(),
+          })
+          .optional()
           .describe(
-            'True when the plain-text body and the HTML part say noticeably different things.'
+            'Present when the result was over the size budget and the longest list was shortened.'
           ),
         headers: z.string().describe('The composed header block, verbatim.'),
         text_body: z.string(),
-        html_body: z.string().optional().describe('After sanitising.'),
+        html_body: z
+          .string()
+          .optional()
+          .describe(
+            'Rendered from the Markdown body; absent for format "text".'
+          ),
         attachments: z.array(
           z.object({
             filename: z.string(),
@@ -332,17 +349,8 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
           `This message would be sent from ${config.smtp.from ?? '(unset)'} ` +
           `to ${prepared.composed.envelope.to.length} recipient(s), ` +
           `${prepared.composed.bytes} bytes. Nothing has been sent.` +
-          // The count, not the list. Each entry names the scheme the caller
-          // wrote before a colon, and this header sits *outside* the fence,
-          // under a preamble telling the reader that everything outside it
-          // came from this server. `send_mail` gets the same list right, as a
-          // capped detail; here it was server voice carrying caller text. The
-          // entries themselves are in `html_removed`, which is data.
-          (prepared.composed.htmlRemoved.length === 0
-            ? ''
-            : `\n${prepared.composed.htmlRemoved.length} thing(s) were removed ` +
-              'from the HTML part; they are listed in html_removed, which is ' +
-              'caller-supplied text like the message itself.') +
+          // Server words only: the notes never repeat the caller's text.
+          prepared.composed.bodyNotes.map((note) => `\n${note}`).join('') +
           (prepared.bcc.length === 0
             ? ''
             : `\nBcc recipients (invisible to the others): ${prepared.bcc.length}.`);
@@ -355,10 +363,10 @@ export function registerInfoTools(server: McpServer, ctx: ToolContext): void {
             recipient_count: prepared.composed.envelope.to.length,
             bcc_count: prepared.bcc.length,
             bytes: prepared.composed.bytes,
-            html_removed: prepared.composed.htmlRemoved,
+            format: args.format,
+            notes: prepared.composed.bodyNotes,
             suspicious: suspiciousPatterns(prepared.suspicious),
             suspicious_in: prepared.suspicious.map((s) => s.field),
-            text_html_diverge: prepared.textHtmlDiverge,
             headers: headerBlockOf(prepared.composed.raw),
             text_body: sanitizeText(prepared.composed.textBody),
             ...(prepared.composed.htmlBody === undefined

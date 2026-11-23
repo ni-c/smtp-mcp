@@ -1,15 +1,60 @@
 import { createHash } from 'node:crypto';
 
-import { detectSuspicious } from './analyze.js';
+import { detectSuspicious, stripInvisible } from './analyze.js';
 import { loadAttachments, type LoadedAttachment } from './attachments.js';
+import { renderMarkdown, type BodyFormat } from './compose-body.js';
 import { composeMessage, type ComposedMessage } from './compose.js';
 import type { Config } from './config.js';
 import { ToolInputError } from './errors.js';
 import { refusedRecipients } from './recipients.js';
-import { htmlToText } from './sanitize.js';
 
 /** How many refused addresses an error names before counting the rest. */
 const MAX_REFUSED_NAMED = 20;
+/**
+ * How many different hosts the HTML part may link to.
+ *
+ * Each gets a line of its own in the confirmation, and a list that summed up
+ * its tail as "further entries" would hide exactly the one link that matters.
+ * A message past this is refused rather than shown in part.
+ */
+export const MAX_LINK_HOSTS = 20;
+
+/** One host the HTML part links to, for the confirmation. */
+export interface LinkHost {
+  /** Web host, or the domain of a mailto address. */
+  host: string;
+  count: number;
+  /** The first destination on this host, as written into the HTML. */
+  first: string;
+}
+
+/** The destinations of the HTML part, grouped by host in order of appearance. */
+function groupLinks(links: readonly string[]): LinkHost[] {
+  const byHost = new Map<string, LinkHost>();
+  for (const href of links) {
+    const host = /^mailto:/i.test(href)
+      ? (href.split('@')[1] ?? '').toLowerCase()
+      : new URL(href).hostname;
+    const entry = byHost.get(host);
+    if (entry === undefined) byHost.set(host, { host, count: 1, first: href });
+    else entry.count += 1;
+  }
+  return [...byHost.values()];
+}
+
+/**
+ * Every reading of a text the detector should see: as written, with invisible
+ * characters gone and compatibility forms folded — `ig\u00ADnore` and
+ * fullwidth letters read as the words a person sees.
+ */
+function suspiciousIn(text: string): string[] {
+  return [
+    ...new Set([
+      ...detectSuspicious(text),
+      ...detectSuspicious(stripInvisible(text.normalize('NFKC'))),
+    ]),
+  ];
+}
 
 /** Keeps the first spelling of each address, comparing case-insensitively. */
 function dedupeAddresses(addresses: readonly string[]): string[] {
@@ -31,7 +76,8 @@ export interface MailArgs {
   bcc?: string[] | undefined;
   subject: string;
   body: string;
-  html?: string | undefined;
+  /** Set by the schema's default; a direct caller may leave it out. */
+  format?: BodyFormat | undefined;
   quote?: string | undefined;
   in_reply_to?: string | undefined;
   references?: string[] | undefined;
@@ -49,6 +95,8 @@ export interface PreparedMessage {
   /** Every address the message will reach, in envelope order. */
   all: string[];
   attachments: LoadedAttachment[];
+  /** The hosts the HTML part links to; empty for plain text. */
+  linkHosts: LinkHost[];
   /**
    * Injection shapes found in the text the caller supplied, by field.
    *
@@ -61,51 +109,14 @@ export interface PreparedMessage {
    * Kept per field, because the two readings are not alike and the dialog has
    * to say which one it is. A match in the quote is a forwarded message that
    * tries to give orders — passed on unchanged, correctly. A match in the body
-   * or the HTML part is the model writing those orders itself, which is the
+   * is the model writing those orders itself, which is the
    * thing the quote was trying to make happen.
    */
   suspicious: SuspiciousField[];
-  /**
-   * Whether the plain-text and HTML parts say noticeably different things.
-   *
-   * A `multipart/alternative` message carries two versions and promises they
-   * are the same. Nothing enforces that: the person approving reads the body
-   * line in the dialog, most recipients see only the HTML part, and a message
-   * whose two parts disagree is the classic shape of both a phishing mail and a
-   * filter-evasion trick. A signal, not a filter — a summary in the body next to
-   * a formatted table in the HTML also trips it, and the dialog says so.
-   */
-  textHtmlDiverge: boolean;
-}
-
-/** Words of three letters or more, lowercased, as a set. */
-function wordSet(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter((word) => word.length >= 3)
-  );
-}
-
-/**
- * Whether the two texts share less than half their vocabulary.
- *
- * Jaccard similarity over word sets. Short texts are exempt: with fewer than
- * five words on either side the measure is noise.
- */
-export function textsDiverge(a: string, b: string): boolean {
-  const wordsA = wordSet(a);
-  const wordsB = wordSet(b);
-  if (wordsA.size < 5 || wordsB.size < 5) return false;
-  let shared = 0;
-  for (const word of wordsA) if (wordsB.has(word)) shared += 1;
-  const union = wordsA.size + wordsB.size - shared;
-  return shared / union < 0.5;
 }
 
 export interface SuspiciousField {
-  field: 'quote' | 'body' | 'html';
+  field: 'quote' | 'body';
   patterns: string[];
 }
 
@@ -194,7 +205,6 @@ export async function prepareMessage(
   const lowerBound =
     Math.ceil(attachmentBytes / 3) * 4 * (78 / 76) +
     args.body.length +
-    (args.html?.length ?? 0) +
     (args.quote?.length ?? 0);
   if (lowerBound > config.maxMessageBytes) {
     throw new ToolInputError(
@@ -212,7 +222,7 @@ export async function prepareMessage(
       bcc,
       subject: args.subject,
       body: args.body,
-      html: args.html,
+      format: args.format ?? 'text',
       quote: args.quote,
       inReplyTo: args.in_reply_to,
       references: args.references,
@@ -223,6 +233,14 @@ export async function prepareMessage(
     config,
     version
   );
+
+  const linkHosts = groupLinks(composed.bodyLinks);
+  if (linkHosts.length > MAX_LINK_HOSTS) {
+    throw new ToolInputError(
+      `smtp-mcp: the HTML part links to ${linkHosts.length} different hosts; ` +
+        `at most ${MAX_LINK_HOSTS} can each be shown for approval. Nothing was sent.`
+    );
+  }
 
   return {
     composed: {
@@ -240,26 +258,50 @@ export async function prepareMessage(
     bcc,
     all,
     attachments,
+    linkHosts,
     suspicious: (
       [
         ['quote', args.quote],
         ['body', args.body],
-        ['html', args.html],
       ] as const
     )
       .filter(
         (entry): entry is readonly [SuspiciousField['field'], string] =>
           entry[1] !== undefined && entry[1] !== ''
       )
-      .map(([field, text]) => ({ field, patterns: detectSuspicious(text) }))
+      .map(([field, text]) => ({
+        field,
+        patterns:
+          field === 'body' && args.format === 'markdown'
+            ? [
+                ...new Set([
+                  ...suspiciousIn(text),
+                  ...suspiciousIn(renderedText(text)),
+                ]),
+              ]
+            : suspiciousIn(text),
+      }))
       .filter((entry) => entry.patterns.length > 0),
-    // Only when both parts were written by the caller. A text part derived
-    // from the HTML (empty body) cannot diverge from it.
-    textHtmlDiverge:
-      args.body !== '' &&
-      composed.htmlBody !== undefined &&
-      textsDiverge(composed.textBody, htmlToText(composed.htmlBody)),
   };
+}
+
+/**
+ * A Markdown body as the recipient reads it: the rendered HTML, tags out.
+ *
+ * The detector reads words, and Markdown can split one — `ig*n*ore all
+ * previous instructions` matches nothing in the source and reads "ignore all
+ * previous instructions" once rendered. The tags are this server's own and
+ * carry no `>` inside them, so dropping them is exact.
+ */
+function renderedText(body: string): string {
+  // Inline tags sit inside words and go without a trace; block tags end one.
+  return renderMarkdown(body)
+    .html.replace(/<\/?(?:em|strong|code|a)\b[^>]*>/g, '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&');
 }
 
 /**
@@ -286,7 +328,7 @@ export function messageFingerprint(
     JSON.stringify([
       args.subject,
       args.body,
-      args.html ?? '',
+      args.format ?? 'text',
       args.quote ?? '',
       args.in_reply_to ?? '',
       args.references ?? [],

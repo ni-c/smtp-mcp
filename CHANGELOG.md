@@ -15,12 +15,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** the `html` parameter of `send_mail`, `reply_mail`, `forward_mail` and
+  `preview_mail` is gone. `format: "markdown"` takes its place: the body is written in
+  Markdown, goes out unchanged as the `text/plain` part, and an HTML part is rendered from
+  it. `format: "text"` is the default and sends what was sent before without `html`. A
+  Markdown body may be at most 100 000 characters.
+- `preview_mail` reports `format` and `notes` (what rendering changed, in the server's own
+  words) and no longer reports `html_removed` or `text_html_diverge`; `suspicious_in` no
+  longer has an `html` value. Its schema now declares the `truncated` block an oversized
+  preview can carry, which a client that had listed the tools used to refuse.
+- The confirmation dialog no longer shows the HTML part and its text rendering. For a
+  Markdown body it lists every link destination instead, host first, and says in its own
+  words what rendering changed.
+- The approval fingerprint covers `format`, so an approval for a plain-text message cannot
+  be spent on the same body sent with an HTML part.
+- markdown-it 15.0.3, pinned exactly, renders the HTML part. Dependabot updates to it are
+  not merged automatically.
 - nodemailer 10. Its `SMTPTransport.Options` now declares `auth` as an optional
   property without `| undefined`, so the transport options omit the key when
   there are no credentials instead of setting it to `undefined` — which is what
   the option already meant: no credentials, no AUTH command. No behaviour
   changes; `tls` was built the same way already.
 - Require Node.js 24 or newer. CI tests the latest 24 and 26 LTS releases; Node 22 is no longer supported.
+
+### Security
+
+- HTML is no longer accepted from the caller, and the regular-expression sanitiser that
+  cleaned it is removed. It had needed four rounds of fixes — a denial of service and three
+  bypasses, each a place where the patterns and a real HTML parser read the same markup
+  differently. The HTML part is now rendered from the Markdown body with every character of
+  the source escaped: raw HTML arrives as text, images become links, links are limited to
+  `https`, `http` and one plain `mailto` address, link text that names a different host or
+  address is replaced by the real destination, character references and reference-style
+  links stay as text, and the rendered HTML is checked against a fixed list of tags and
+  attributes and a size ceiling before it is sent. The confirmation dialog lists every host
+  the HTML part links to on its own line, the end of a long host first; a body linking to more
+  than twenty hosts is refused before anyone is asked. The prompt-injection check reads the
+  body as written, as rendered, and with invisible characters removed and compatibility forms
+  folded, and the dialog says when the body or the quoted original contains bidi overrides,
+  zero-width spaces or soft hyphens — for plain-text messages too. The rendering module is shared byte for byte with
+  `imap-mcp`.
 
 ## [0.2.0] - 2026-09-07
 

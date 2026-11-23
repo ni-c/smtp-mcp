@@ -5,7 +5,7 @@ import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 import type { LoadedAttachment } from './attachments.js';
 import type { Config } from './config.js';
 import { ToolInputError } from './errors.js';
-import { htmlToText, sanitizeHtml } from './sanitize.js';
+import { composeBodies, type BodyFormat } from './compose-body.js';
 
 export interface MessageInput {
   to: string[];
@@ -13,7 +13,7 @@ export interface MessageInput {
   bcc: string[];
   subject: string;
   body: string;
-  html?: string | undefined;
+  format: BodyFormat;
   /** Original text quoted below the body, for a reply or a forward. */
   quote?: string | undefined;
   inReplyTo?: string | undefined;
@@ -23,27 +23,6 @@ export interface MessageInput {
   date?: Date | undefined;
   /** Injected by the tests; real calls generate one. */
   messageId?: string | undefined;
-}
-
-/** How many distinct removals are named before the rest is counted instead. */
-const MAX_REMOVALS_SHOWN = 20;
-
-/**
- * The removal list, bounded.
- *
- * Each entry names the scheme the caller wrote before a colon, so the number of
- * entries is chosen by whoever wrote the HTML: 4260 distinct schemes in a 64 kB
- * part produced 4260 entries, which then travelled twice — once in the text
- * block and once in `structuredContent`. The individual entry was already
- * capped; the count was not, and a per-item cap without a total is only half a
- * budget. What is dropped is said rather than left out.
- */
-function summariseRemovals(removed: readonly string[]): string[] {
-  if (removed.length <= MAX_REMOVALS_SHOWN) return [...removed];
-  return [
-    ...removed.slice(0, MAX_REMOVALS_SHOWN),
-    `… and ${removed.length - MAX_REMOVALS_SHOWN} further removals not listed`,
-  ];
 }
 
 export interface ComposedMessage {
@@ -61,8 +40,10 @@ export interface ComposedMessage {
   envelope: { from: string; to: string[] };
   messageId: string;
   bytes: number;
-  /** What `sanitizeHtml` took out, so the sender is told rather than surprised. */
-  htmlRemoved: string[];
+  /** What rendering the Markdown changed, in compose-body's words. */
+  bodyNotes: string[];
+  /** Every link destination in the HTML part: caller text, shown in the dialog. */
+  bodyLinks: string[];
   /**
    * The bodies as they went into the message.
    *
@@ -115,54 +96,6 @@ export function normalizeMessageId(value: string): string {
   return `<${bare}>`;
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-/** Quoted-reply convention: every line of the original prefixed with "> ". */
-function quoteText(quote: string): string {
-  return quote
-    .split(/\r?\n/)
-    .map((line) => (line === '' ? '>' : `> ${line}`))
-    .join('\n');
-}
-
-function buildTextBody(input: MessageInput, config: Config): string {
-  const parts = [input.body];
-  if (input.quote !== undefined && input.quote !== '') {
-    parts.push(`\n\n${quoteText(input.quote)}`);
-  }
-  if (config.signature !== undefined) {
-    // The standard signature delimiter. Mail clients hide everything below it
-    // when quoting a reply, which is exactly what a signature is for.
-    parts.push(`\n\n-- \n${config.signature}`);
-  }
-  return parts.join('');
-}
-
-function buildHtmlBody(
-  input: MessageInput,
-  config: Config,
-  cleaned: string
-): string {
-  const parts = [cleaned];
-  if (input.quote !== undefined && input.quote !== '') {
-    parts.push(
-      `\n<blockquote>${escapeHtml(input.quote).replace(/\r?\n/g, '<br>\n')}</blockquote>`
-    );
-  }
-  if (config.signature !== undefined) {
-    parts.push(
-      `\n<div>-- <br>\n${escapeHtml(config.signature).replace(/\r?\n/g, '<br>\n')}</div>`
-    );
-  }
-  return parts.join('');
-}
-
 /**
  * Builds the complete message.
  *
@@ -195,21 +128,16 @@ export async function composeMessage(
     assertSingleRecipient(address);
   }
 
-  let htmlRemoved: string[] = [];
-  let html: string | undefined;
-  if (input.html !== undefined && input.html !== '') {
-    const sanitized = sanitizeHtml(input.html);
-    htmlRemoved = summariseRemovals(sanitized.removed);
-    html = buildHtmlBody(input, config, sanitized.html);
-  }
-
-  // An HTML-only message still gets a text part, derived from the cleaned HTML.
-  // A message with no text alternative reads as spam to a fair number of
-  // filters and is unreadable in any client configured to refuse HTML.
-  const text =
-    input.body === '' && html !== undefined
-      ? htmlToText(html)
-      : buildTextBody(input, config);
+  // The text part is always the caller's body; an HTML part exists only as a
+  // rendering of it, so the two cannot say different things.
+  const bodies = composeBodies({
+    body: input.body,
+    format: input.format,
+    quote: input.quote,
+    signature: config.signature,
+  });
+  const text = bodies.text;
+  const html = bodies.html;
 
   const messageId =
     input.messageId ?? `<${randomUUID()}@${fromAddress.split('@')[1]}>`;
@@ -270,7 +198,8 @@ export async function composeMessage(
     },
     messageId,
     bytes: raw.length,
-    htmlRemoved,
+    bodyNotes: bodies.notes,
+    bodyLinks: bodies.links,
     textBody: text,
     htmlBody: html,
   };

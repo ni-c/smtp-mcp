@@ -83,7 +83,7 @@ Bcc recipients get their own line, labelled as hidden from the others. A Bcc a h
 in the dialog is the ideal exfiltration channel: the message looks exactly like the one they
 approved.
 
-The **body** is shown too, with the quoted original and the HTML part when they are set, each
+The **body** is shown too, with the quoted original when it is set, each
 labelled with its length in characters. Every other layer here binds the envelope — who may be
 written to, which recipients the approval covers, how many messages an hour. None of them looks
 at what is written, so a model steered into mailing local secrets to somebody already on the
@@ -141,35 +141,27 @@ It is never applied to the outgoing message. A mail client is supposed to render
 message somebody deliberately sent, and rewriting an approved body would corrupt it. Defuse what
 the model reads; send what the human approved.
 
-## Outgoing HTML
+## Formatted messages
 
-The HTML part is the one thing this server modifies before sending, and it needs justifying,
-because everywhere else the rule is "send exactly what was approved".
+`format: "markdown"` adds an HTML part rendered from the body. The HTML is never taken from the
+caller: every character of the Markdown source is escaped, so the only tags in the part are the
+renderer's own. Raw HTML arrives as text, images become links, links go only to `https`, `http`
+or one plain `mailto` address, and a link whose text names another destination shows the real
+one. The rendered HTML is checked against a fixed list of tags and attributes before it is used.
 
-The exception exists because an HTML body is written by a model and the things removed are things
-a person approving the message cannot see in it: scripts that run on open, event handlers,
-remotely loaded images that report back when and where the message was read, and `javascript:` or
-`data:` URLs. The dialog can show a subject and a recipient list; it cannot show that a pretty
-invoice contains a beacon.
+Character references and reference-style links stay as text, so the HTML part cannot show a
+character the body does not and cannot grow far beyond it.
 
-Removals are conservative and every one is listed in the confirmation and in `preview_mail`.
-Links are left alone — they fetch nothing on their own. Nothing is silently rewritten.
+The plain-text part is the body exactly as written, and it is what the dialog shows; the HTML is
+derived from it. Because a link shows its text rather than its destination, the dialog lists
+every host the HTML part links to on a line of its own, the end of a long host first, and a body
+linking to more than twenty hosts is refused. The injection check reads the body as written, as
+rendered, and with invisible characters removed.
 
-"Remotely loaded" means `src`, `srcset`, `imagesrcset`, `poster` and `background`, and each
-candidate of a `srcset` list on its own. A `background` on a `<body>` or a `<table>` is a counter
-just as much as a 1×1 `<img>`: it reports when a message was opened, from where, and how often.
-
-Values are read the way a client reads them: character references decoded to the end of their
-digit run (`&#0000000104;ttps:` is `https:`), whitespace and control characters stripped inside a
-scheme, backslashes read as slashes. And every removal leaves a space behind, so cutting one
-attribute out can never join its neighbours into another — `<img sr onclick="x"c=…>` must not
-become `<img src=…>`. A second run of the passes checks that the first one was complete.
-
-And when markup that must not survive is still there after every pass has run, the message is
-**refused** rather than repaired. A regex is not a parser and the recipient's client is, so the
-two can be made to disagree; for outgoing text the safe direction is to stop. It is also what
-keeps the removal list honest — the dialog can only name something that really is gone, because
-a message where it is not gone never leaves.
+Up to 0.2 this server accepted HTML and cleaned it with regular expressions. That approach had a
+denial of service and three bypasses across four reviews, each a place where the patterns and a
+real parser disagreed; it is gone rather than patched once more. See
+[SECURITY.md](https://github.com/ni-c/smtp-mcp/blob/main/SECURITY.md#formatted-messages).
 
 ## What framing buys
 

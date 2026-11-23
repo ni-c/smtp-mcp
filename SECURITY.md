@@ -86,8 +86,9 @@ Bcc recipients get their own line, labelled as hidden from the others. A Bcc tha
 not see in the dialog is the ideal exfiltration channel: the message looks exactly like the one
 they approved.
 
-**The body is shown too**, along with the quoted original and the HTML part when they are set,
-each with its own length in characters. Every other layer here binds the _envelope_: the
+**The body is shown too**, along with the quoted original when it is set, each with its own
+length in characters, and a line saying when the message also carries an HTML part rendered from
+the body. Every other layer here binds the _envelope_: the
 allowlist says who may be written to, the fingerprint ties the approval to those exact
 recipients, the hourly cap limits how many go out. None of them looks at what is written. A
 model steered by an injected instruction into mailing local secrets to an address that is
@@ -110,8 +111,8 @@ during composition.
 ### At most once
 
 **What an approval binds, and what it does not.** The fingerprint ties an approval to one exact
-message: the three recipient fields separately, the subject, the body, the quoted original, the
-HTML part, the attachment names and the attachment bytes. That is binding. _Freshness_ — that
+message: the three recipient fields separately, the subject, the body, the format, the quoted original,
+the attachment names and the attachment bytes. That is binding. _Freshness_ — that
 an answer is spent by being used — is a separate property, and it is layered twice. Since
 `mcp-approval` 0.8.1 the sealed elicitation state carries a nonce that is spent on the first
 answer, accepted or declined, so the same state presented again is a fresh question rather than
@@ -212,52 +213,67 @@ resistance to injection from roughly 61% to roughly 90% — a real improvement, 
 guarantee. Against an attacker who adapts to the defence, prompt-level measures fail. Here they
 are a speed bump; the allowlist and the human confirmation are the wall.
 
-## Outgoing HTML
+## Formatted messages
 
-The HTML part of a message is the one thing this server modifies before sending, and it needs
-justifying, because everywhere else the rule is "send exactly what was approved". The exception
-exists because an HTML body is written by a model and the things removed are things a person
-approving the message cannot see in it: scripts that run on open, event handlers on elements,
-remotely loaded images that report back when and where the message was read, and `javascript:`
-or `data:` URLs. The confirmation dialog can show a subject and a recipient list; it cannot show
-that a pretty invoice contains a beacon.
+`format: "markdown"` adds an HTML part to a message, and HTML is where a message can say less
+than it does: a script that runs on open, a remotely loaded image that reports when and where
+the message was read, a link whose text names one site and whose target is another. None of
+that can be seen in a confirmation dialog that shows a subject and a body.
 
-Removals are conservative, and every one of them is listed in the confirmation and in
-`preview_mail`. Links are left alone — they fetch nothing on their own, and an HTML mail without
-links is not worth sending. Nothing is silently rewritten.
+So this server never takes HTML from its caller. Up to 0.2 it did, and cleaned it with a set of
+regular expressions; four rounds of review found a denial of service and three ways past it, each
+a place where the patterns and a real HTML parser read the same markup differently. That class of
+bug is not one more pattern away from closed, so the input it came from is gone.
 
-"Remotely loaded" covers `src`, `srcset`, `imagesrcset`, `poster` and `background`, each
-candidate of a `srcset` descriptor list separately. `srcset` in particular used to go through
-untouched, and a `background` on a `<body>` or a `<table>` is a counter just as much as a 1×1
-`<img>` is: it reports the moment a message was opened, from which address, and how often.
+The HTML part is now **rendered from the Markdown body**, with markdown-it set up to escape every
+`<`, `>`, `&` and `"` in the source. The only tags in the result are the renderer's own, so there
+is nothing to remove and nothing to get past:
 
-**The passes model the tokenizer, not a space.** An attribute may follow whitespace, a `/` or the
-closing quote of the previous value — `<img/src=…>` carries a `src` — so the attribute patterns
-accept all three. A value is read the way a client reads it: character references decoded
-(`&#104;ttps:`, `https&colon;`), whitespace and control characters stripped inside the scheme,
-backslashes read as slashes in a network-path start. An inline style is decoded once more as CSS,
-where `u\72l(` is `url(`, and dropped whole when anything in it fetches. Each of these was a shape
-that went out untouched with an empty removal list before it was covered.
+- **Raw HTML is text.** `<script>`, `<img>`, `<style>` or an `onerror=` arrive as the characters
+  typed. So do character references: `&#x202E;` stays those eight characters rather than
+  becoming a bidi override, and `&#73;gnore` stays as written rather than becoming a word.
+- **Nothing loads by itself.** An image becomes a link to the image. There is no `<img>`, no
+  `style` and no remote resource in the part, so it cannot carry a tracking pixel.
+- **Links go to `https`, `http` or one plain `mailto` address.** Anything else — `javascript:`,
+  `data:`, a relative path, credentials in the URL, a `mailto` with a query that would fill in
+  `cc` or a body — stays as text. Reference-style links (`[text][label]`) stay as text too: one
+  long destination reused by a few characters each made a 100 000-character body render to
+  hundreds of megabytes, through `preview_mail`, which nothing gates.
+- **Link text cannot claim another destination.** When the text of a link names any host,
+  address or IP other than its target — alone, inside a sentence, in quotes, glued to
+  punctuation, written with lookalike dots or fullwidth letters — or the target is an
+  internationalised domain, or the text contains invisible or direction-changing characters,
+  the HTML shows the target itself. The check fails closed: what looks like a host is
+  compared, not what matches one exact pattern.
+- **The rendered HTML is checked against a fixed list** of tags and attributes, and against a
+  fixed size ceiling of 2 000 000 characters (twenty times the largest Markdown body), before it
+  is used. Anything else refuses the
+  message rather than sending it — this is a check of the renderer's own output, not a
+  sanitiser.
+- **Nesting the renderer would cut off is refused**, so the HTML part never lacks text the plain
+  part has.
 
-Two more shapes of the same kind, found in the third review. A numeric character reference is
-read to the end of its digit run, however long: `&#0000000104;` is `h` to every client, and a
-decoder that stopped after seven digits saw seven zeros and left a scheme-less `104;ttps://`
-behind. And every removal leaves a space in its place. `<img sr onclick="x"c=…>` is three inert
-attributes to a tokenizer; cutting the handler out of the middle with nothing left behind made
-`<img src=…>` — a beacon manufactured by the pass that removes handlers, after the pass that
-removes beacons had already run. A second, counted run of the passes then refuses the message if
-it still finds anything, so the removal list the dialog reads out is the whole truth or the
-message does not leave.
+The plain-text part is the body exactly as written, and it is what the dialog shows. The HTML is
+derived from it, so it says nothing the body does not. What a rendering can still hide is where
+a link goes: `[agenda](https://…?id=…)` shows the word "agenda", and the body line in the dialog
+is cut at 200 characters. So the dialog lists **every host the HTML part links to on a line of
+its own** — the end of a long host first, because that is where its registrable domain sits and
+every dialog value is cut at 200 characters — with how many links go there and the first of
+them. A body linking to more than twenty different hosts is refused before anyone is asked: a
+list that summed up its tail would hide exactly the link that matters. A host longer than DNS
+allows is not a link at all. The count and the notes about rewritten or refused links stand in
+the consequence, in the server's words and uncut, not among the caller-supplied values.
 
-**And the passes can refuse rather than repair.** A regex is not a parser, and the recipient's
-client is; the two can always be made to disagree somewhere. When markup that must not survive
-is still present after every pass has run, the message is rejected instead of sent. The refusal
-check is built from the same element list as the removal passes — `<link>`, `<base>` and `<meta>`
-included — so nothing a pass tries to remove can leave. For outgoing
-text that is the right direction — a message that never left can be fixed, a message that
-arrived carrying a script cannot be recalled — and it is what keeps the list of removals honest:
-the dialog can only ever name something that really is gone, because a message where it is not
-gone is not sent at all.
+The prompt-injection check reads the body as written, as rendered — Markdown can split a word,
+and `ig*n*ore all previous instructions` matches nothing in the source — and with invisible
+characters removed and compatibility forms folded, so a soft hyphen or fullwidth letters do not
+hide a phrase either. When the body or the quoted original contains a bidi override or isolate,
+a zero-width space, a word joiner or a soft hyphen, the consequence says so: the dialog cannot
+show them, and the recipient's mail client obeys them. Joiners and direction marks are not
+counted — emoji and right-to-left scripts need them, and they hide nothing. An autolink shows its destination exactly as written, never percent-decoded into words.
+
+The rendering module is the same file, byte for byte, as the one `imap-mcp` uses for drafts, and
+its tests pin that.
 
 ## Attachments
 
@@ -272,8 +288,8 @@ fails there. Sending an executable out under your own name and your own DKIM sig
 than receiving one, because it is trusted on arrival.
 
 For the same reason `text/html` and `application/zip` are not in the default type list. An HTML
-file opens in a browser rather than a mail client and gets none of the sanitising the HTML part of
-a message gets; an archive passes the magic-byte check on its own bytes and can carry the
+file opens in a browser rather than a mail client, and unlike the HTML part of a message nobody
+but its author wrote it; an archive passes the magic-byte check on its own bytes and can carry the
 executable the check never sees. An operator who needs either writes it into
 `SMTP_ATTACHMENT_TYPES`.
 
