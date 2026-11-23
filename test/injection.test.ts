@@ -604,7 +604,7 @@ describe('what the dialog says about the message, and in whose words', () => {
       elicit: 'accept',
     });
     await call(harness.client, 'send_mail', sendArgs());
-    expect(harness.prompts.join('\n')).not.toMatch(/Format:/);
+    expect(harness.prompts.join('\n')).not.toMatch(/also carries an HTML part/);
     await harness.close();
   });
 
@@ -775,13 +775,33 @@ describe('what the dialog says about the message, and in whose words', () => {
     await harness.close();
   });
 
-  it('says nothing about invisible characters when there are none', async () => {
+  it.each([
+    ['plain text', 'Here it is.'],
+    ['an emoji with a joiner', 'Our team 👨‍👩‍👧 says hi.'],
+    ['Persian with a non-joiner', 'سلام‌دنیا'],
+    ['Hebrew with a direction mark', '\u200eשלום'],
+  ])('says nothing about invisible characters for %s', async (_name, body) => {
     const harness = await connect({
       config: { allowSend: true },
       elicit: 'accept',
     });
-    await call(harness.client, 'send_mail', sendArgs());
+    await call(harness.client, 'send_mail', sendArgs({ body }));
     expect(harness.prompts.join('\n')).not.toMatch(/direction-changing/);
+    await harness.close();
+  });
+
+  it('says so when only the quoted original carries a bidi override', async () => {
+    const harness = await connect({
+      config: { allowSend: true },
+      elicit: 'accept',
+    });
+    await call(harness.client, 'forward_mail', {
+      to: ['anna@example.net'],
+      original_subject: 'Invoice',
+      body: 'See below.',
+      quote: 'IBAN DE89 \u202e0100 5432\u202c',
+    });
+    expect(harness.prompts.join('\n')).toMatch(/direction-changing/);
     await harness.close();
   });
 

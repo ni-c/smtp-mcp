@@ -246,7 +246,8 @@ is nothing to remove and nothing to get past:
   the HTML shows the target itself. The check fails closed: what looks like a host is
   compared, not what matches one exact pattern.
 - **The rendered HTML is checked against a fixed list** of tags and attributes, and against a
-  size ceiling of twenty times the source, before it is used. Anything else refuses the
+  fixed size ceiling of 2 000 000 characters (twenty times the largest Markdown body), before it
+  is used. Anything else refuses the
   message rather than sending it — this is a check of the renderer's own output, not a
   sanitiser.
 - **Nesting the renderer would cut off is refused**, so the HTML part never lacks text the plain
@@ -266,9 +267,10 @@ the consequence, in the server's words and uncut, not among the caller-supplied 
 The prompt-injection check reads the body as written, as rendered — Markdown can split a word,
 and `ig*n*ore all previous instructions` matches nothing in the source — and with invisible
 characters removed and compatibility forms folded, so a soft hyphen or fullwidth letters do not
-hide a phrase either. When the body contains invisible or direction-changing characters at all,
-the consequence says so: the dialog cannot show them, and the recipient's mail client obeys
-them. An autolink shows its destination exactly as written, never percent-decoded into words.
+hide a phrase either. When the body or the quoted original contains a bidi override or isolate,
+a zero-width space, a word joiner or a soft hyphen, the consequence says so: the dialog cannot
+show them, and the recipient's mail client obeys them. Joiners and direction marks are not
+counted — emoji and right-to-left scripts need them, and they hide nothing. An autolink shows its destination exactly as written, never percent-decoded into words.
 
 The rendering module is the same file, byte for byte, as the one `imap-mcp` uses for drafts, and
 its tests pin that.

@@ -52,8 +52,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the HTML part links to on its own line, the end of a long host first; a body linking to more
   than twenty hosts is refused before anyone is asked. The prompt-injection check reads the
   body as written, as rendered, and with invisible characters removed and compatibility forms
-  folded, and the dialog says when a body contains invisible or direction-changing characters
-  — for plain-text bodies too. The rendering module is shared byte for byte with
+  folded, and the dialog says when the body or the quoted original contains bidi overrides,
+  zero-width spaces or soft hyphens — for plain-text messages too. The rendering module is shared byte for byte with
   `imap-mcp`.
 
 ## [0.2.0] - 2026-09-07

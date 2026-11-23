@@ -26,7 +26,11 @@ import {
 import { z } from 'zod';
 
 import { audit } from '../audit.js';
-import { bodyParam, formatParam } from '../compose-body.js';
+import {
+  bodyParam,
+  formatParam,
+  hasDeceptiveFormatting,
+} from '../compose-body.js';
 import type { RateLimitSlot } from '../ratelimit.js';
 import { ToolInputError } from '../errors.js';
 import { jsonResult, run } from '../result.js';
@@ -328,13 +332,19 @@ async function withSlot(
           'host(s), every host listed below.');
     for (const note of prepared.composed.bodyNotes) consequence += ` ${note}`;
   }
-  if (/\p{Cf}/u.test(args.body)) {
-    // The dialog strips these before showing the body; a mail client obeys
+  if (
+    hasDeceptiveFormatting(args.body) ||
+    hasDeceptiveFormatting(args.quote ?? '')
+  ) {
+    // The dialog strips these before showing the text; a mail client obeys
     // them. Said here, in the server's words, so the difference is visible.
+    // Joiners and direction marks are not counted: emoji and right-to-left
+    // scripts need them, and they hide nothing.
     consequence +=
-      '\n\nNote: the body contains invisible or direction-changing ' +
-      'characters (zero-width spaces, soft hyphens, bidi overrides). The ' +
-      "lines below do not show them; the recipient's mail client applies them.";
+      '\n\nNote: the body or the quoted original contains invisible or ' +
+      'direction-changing characters (zero-width spaces, soft hyphens, bidi ' +
+      "overrides). The lines below do not show them; the recipient's mail " +
+      'client applies them.';
   }
   for (const { field, patterns } of prepared.suspicious) {
     // Server-authored text naming server-authored constants: the pattern names

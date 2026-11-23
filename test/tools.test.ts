@@ -324,7 +324,7 @@ describe('preview_mail', () => {
     await harness.close();
   });
 
-  it('refuses the html parameter it no longer has', async () => {
+  it('drops the html parameter it no longer has and sends plain text', async () => {
     const harness = await connect();
     const result = await call(
       harness.client,
