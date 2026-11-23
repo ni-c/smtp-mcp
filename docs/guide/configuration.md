@@ -119,8 +119,8 @@ and anything whose leading bytes say it is a binary regardless of what it is cal
 
 The default type list is documents and images. Two things are deliberately not on it and have to
 be written into `SMTP_ATTACHMENT_TYPES` by hand: `text/html`, because an HTML *file* opens in a
-browser with none of a mail client's restrictions and none of the sanitising the HTML *part* of a
-message gets — the phishing shape called HTML smuggling — and `application/zip`, because an archive
+browser with none of a mail client's restrictions, and unlike the HTML *part* of a message it is
+not rendered by this server from escaped Markdown — the phishing shape called HTML smuggling — and `application/zip`, because an archive
 passes the magic-byte check on its own bytes and can carry an executable the check never sees.
 
 The directory is the only source of the path. A caller cannot choose which part of your disk gets

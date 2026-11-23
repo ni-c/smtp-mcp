@@ -110,8 +110,8 @@ export interface Config {
  *
  * - `text/html`: an HTML file as an attachment is the phishing shape called
  *   HTML smuggling. It opens in a browser, not a mail client, with none of the
- *   mail client's restrictions, and nothing in this server sanitises it — the
- *   HTML *part* of a message goes through `sanitize.ts`; a file does not.
+ *   mail client's restrictions, and nothing in this server produced it — the
+ *   HTML *part* of a message is rendered from Markdown here; a file is not.
  * - `application/zip`: an archive passes the magic-byte check on its own
  *   bytes (`PK`) and can carry an `.exe` the check never sees.
  *

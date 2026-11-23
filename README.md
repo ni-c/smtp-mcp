@@ -289,8 +289,8 @@ its own send, where the marker would be a false claim about who wrote it.
 - **A confirmation is bound to the exact message**: a SHA-256 fingerprint over the sorted
   recipient list and a digest of the content, so an approval cannot be spent on a wider list or
   on different text.
-- **The dialog shows the message**, not only the envelope: the body, the quoted original and the
-  HTML part, each with its length in characters. Everything else here binds who a message goes
+- **The dialog shows the message**, not only the envelope: the body and the quoted original, each with
+  its length in characters, and a line when the message carries a rendered HTML part. Everything else here binds who a message goes
   to; this is what binds what it says.
 - **Bcc recipients get their own labelled line** in the dialog. A hidden recipient a human does
   not see is the ideal exfiltration channel.
@@ -298,9 +298,10 @@ its own send, where the marker would be a false claim about who wrote it.
 - **The same message is not sent twice.** An approval proves that somebody agreed to a message,
   not that they agreed to it again, so a message the SMTP server accepted is remembered for as
   long as an approval for it could still be redeemed.
-- **Outgoing HTML is stripped** of scripts, event handlers, remotely loaded images and unsafe URL
-  schemes — and every removal is reported, never silent. Markup that cannot be cleaned with
-  confidence is **refused** rather than repaired.
+- **HTML is never taken from the caller.** `format: "markdown"` renders an HTML part from the
+  body with every character of the source escaped: raw HTML arrives as text, images become
+  links, links go only to `https`, `http` or one plain `mailto` address, and a link whose text
+  names another destination shows the real one.
 - **A quoted original is passed on unchanged**, with any prompt-injection shapes it matches named
   in the dialog.
 - **Attachments come only from `SMTP_ATTACHMENT_DIR`**, past an extension allowlist, a symlink

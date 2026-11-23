@@ -45,17 +45,12 @@ const MAIL = {
   cc: ['carol@example.net'],
   bcc: ['hidden@example.net'],
   subject: SUBJECT,
-  body: 'Integration body.',
-  html:
-    '<p>Integration body.</p><script>steal()</script>' +
-    '<img src="https://tracker.example/p.gif">' +
-    // The two shapes that used to walk straight through: a `<` in an earlier
-    // attribute value, which stopped the tag pattern reaching the closing `>`,
-    // and `srcset`, which `\bsrc` never matched at all. Both are beacons and
-    // both are asserted on the transmitted bytes below.
-    '<img alt="<" src="https://tracker.example/hidden.gif">' +
-    '<img srcset="https://tracker.example/set.gif 2x">' +
-    '<script a="<">peek()</script>',
+  body:
+    'Integration body.\n\n<script>steal()</script> ' +
+    '<img src="https://tracker.example/p.gif"> ' +
+    '![pixel](https://tracker.example/hidden.gif) ' +
+    '[https://bank.example](https://evil.example)',
+  format: 'markdown',
   attachments: ['report.pdf'],
 };
 
@@ -155,20 +150,19 @@ describe('the attachment policy', () => {
   });
 });
 
-describe('markup that cannot be cleaned', () => {
-  it('is refused rather than sent with a script still in it', async () => {
-    // Refusing is the right failure for outgoing text: nothing arrives that
-    // cannot be recalled. An unterminated attribute quote is the case no
-    // pattern here can resolve, so it is the case that must stop.
+describe('a body that cannot be rendered', () => {
+  it('is refused rather than sent with its HTML cut short', async () => {
+    // Past the nesting the renderer follows, the rest of the block would be
+    // dropped from the HTML part while the text part kept it.
     await asking.call(
       'send_mail',
       {
         to: ['anna@example.net'],
         subject: SUBJECT,
-        body: 'This must not go out.',
-        html: '<p>x</p><script a="',
+        body: `${'> '.repeat(30)}This must not go out.`,
+        format: 'markdown',
       },
-      { expectError: /still contains a <script> tag/ }
+      { expectError: /nest block quotes and lists only so deep/ }
     );
     expect((await inbox(sandbox.api)).messages_count).toBe(0);
   });
@@ -201,15 +195,12 @@ describe('the preview', () => {
     // wire: there is one composition path and this is it.
     expect(preview).toContain('Reply-To: Sandbox Replies');
     expect(preview).toContain('X-Mailer: smtp-mcp/');
-    // The sanitiser's work, visible before anything is committed — as data.
-    // It names the scheme the caller wrote before a colon, so it belongs in a
-    // field rather than in the server's own header, which sits outside the
-    // untrusted fence.
-    expect(preview).toMatch(/thing\(s\) were removed from the HTML part/);
+    // What rendering changed, visible before anything is committed, in the
+    // server's own words.
+    expect(preview).toMatch(/1 link showed text that did not match/);
     expect(result.structuredContent).toMatchObject({
-      html_removed: expect.arrayContaining([
-        expect.stringContaining('<script> element'),
-      ]),
+      format: 'markdown',
+      notes: [expect.stringMatching(/^1 link showed text/)],
     });
     // The Bcc is not in the header block: that is the whole point of a Bcc,
     // and a preview that leaked it would teach the wrong thing.
@@ -286,13 +277,18 @@ describe('sending, and what actually arrived', () => {
     expect(message.ReplyTo[0]!.Address).toBe('replies@example.net');
     expect(message.From.Address).toBe('sandbox@example.net');
 
-    // None of them survived the sanitiser, and this is the only place that can
-    // be checked on the bytes that were actually transmitted. `hidden.gif`,
-    // `set.gif` and `peek()` are the three that used to go out under the
-    // operator's own DKIM signature while the dialog said they had been removed.
-    expect(wire).not.toContain('tracker.example');
-    expect(wire).not.toContain('steal()');
-    expect(wire).not.toContain('peek()');
+    // The HTML part as it was transmitted: the caller's markup arrived as
+    // text, the image as a link, the lying link as its destination. The text
+    // part carries the source as written, which is what the dialog showed.
+    expect(message.HTML).toContain('&lt;script&gt;steal()&lt;/script&gt;');
+    expect(message.HTML).toContain(
+      '<a href="https://tracker.example/hidden.gif">pixel</a>'
+    );
+    expect(message.HTML).toContain(
+      '<a href="https://evil.example">https://evil.example</a>'
+    );
+    expect(message.HTML).not.toMatch(/<(script|img)\b/i);
+    expect(message.Text).toContain('<script>steal()</script>');
 
     expect(message.Attachments).toHaveLength(1);
     expect(message.Attachments[0]!.FileName).toBe('report.pdf');

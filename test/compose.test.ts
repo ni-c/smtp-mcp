@@ -18,6 +18,7 @@ async function compose(
       bcc: [],
       subject: 'Quarterly report',
       body: 'Here it is.',
+      format: 'text',
       attachments: [],
       date: DATE,
       messageId: '<fixed@example.net>',
@@ -179,25 +180,57 @@ describe('composeMessage', () => {
     expect(composed.textBody).toContain('\n-- \nAda Lovelace\nExample GmbH');
   });
 
-  it('sanitises the HTML part and reports what it removed', async () => {
-    const composed = await compose({
-      html: '<p>hi</p><script>steal()</script><img src="https://t.example/p.gif">',
-    });
-    expect(composed.htmlBody).not.toMatch(/steal|t\.example/);
-    expect(composed.htmlRemoved).toContain('<script> element');
-    expect(composed.htmlRemoved).toContain(
-      'remotely loaded <img> (tracking risk)'
-    );
+  it('sends plain text alone by default', async () => {
+    const composed = await compose({ body: 'Hi **there**' });
+    expect(composed.htmlBody).toBeUndefined();
+    expect(composed.raw.toString('utf8')).not.toContain('text/html');
   });
 
-  it('derives a text part for an HTML-only message', async () => {
-    // A message with no text alternative reads as spam to a fair number of
-    // filters and is unreadable wherever HTML is refused.
+  it('adds an HTML part rendered from a Markdown body', async () => {
     const composed = await compose({
-      body: '',
-      html: '<p>Hello</p><p>Bye</p>',
+      body: 'Hi **there**\n\n<script>steal()</script> ![p](https://t.example/p.gif)',
+      format: 'markdown',
     });
-    expect(composed.textBody).toBe('Hello\nBye');
+    expect(composed.textBody).toBe(
+      'Hi **there**\n\n<script>steal()</script> ![p](https://t.example/p.gif)'
+    );
+    expect(composed.htmlBody).toContain('<strong>there</strong>');
+    expect(composed.htmlBody).toContain('&lt;script&gt;steal()&lt;/script&gt;');
+    expect(composed.htmlBody).toContain(
+      '<a href="https://t.example/p.gif">p</a>'
+    );
+    expect(composed.htmlBody).not.toMatch(/<(script|img)/);
+    expect(composed.raw.toString('utf8')).toContain('multipart/alternative');
+  });
+
+  it('puts quote and signature into both parts, the HTML ones escaped', async () => {
+    const composed = await compose(
+      { body: 'Yes.', format: 'markdown', quote: 'Was it <b>you</b>?' },
+      testConfig({ signature: 'Ada & Co' })
+    );
+    expect(composed.textBody).toBe(
+      'Yes.\n\n> Was it <b>you</b>?\n\n-- \nAda & Co'
+    );
+    expect(composed.htmlBody).toContain(
+      '<blockquote>Was it &lt;b&gt;you&lt;/b&gt;?</blockquote>'
+    );
+    expect(composed.htmlBody).toContain('<div>-- <br>\nAda &amp; Co</div>');
+  });
+
+  it('reports what rendering changed, in its own words', async () => {
+    const composed = await compose({
+      body: '[bank.example](https://evil.example)',
+      format: 'markdown',
+    });
+    expect(composed.bodyNotes).toEqual([
+      expect.stringMatching(/^1 link showed text that did not match/),
+    ]);
+  });
+
+  it('refuses a Markdown body over its ceiling as a caller error', async () => {
+    await expect(
+      compose({ body: 'a'.repeat(100_001), format: 'markdown' })
+    ).rejects.toThrow(ToolInputError);
   });
 
   it('refuses a message over the size limit, naming the variable', async () => {
@@ -221,6 +254,7 @@ describe('composeMessage', () => {
         bcc: [],
         subject: 's',
         body: 'b',
+        format: 'text',
         attachments: [],
         date: DATE,
       },

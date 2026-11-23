@@ -1,21 +1,9 @@
 import { z } from 'zod';
 
+import { MAX_BODY_CHARS } from './compose-body.js';
+
 /** Ceiling on how many addresses one message may carry, before the config cap. */
 export const MAX_ADDRESSES = 50;
-/** Ceiling on a body, before the composed-message cap in `compose.ts`. */
-export const MAX_BODY_CHARS = 500_000;
-/**
- * Ceiling on an HTML body, well below the plain-text one.
- *
- * The HTML part is the only body that gets parsed rather than copied, and the
- * removal passes in `sanitize.ts` are regex-based with bounded scan windows.
- * Bounded is not the same as linear: a body full of unclosed tags makes each
- * window run at every position, and at 500 kB that was fourteen seconds of
- * blocked event loop per call — reachable through `preview_mail`, which needs
- * no send gate, no confirmation and no rate limit. The ceiling and the anchored
- * patterns in `sanitize.ts` are two halves of the same fix.
- */
-export const MAX_HTML_CHARS = 64_000;
 
 /**
  * Characters that end a line somewhere.
@@ -125,23 +113,6 @@ export const subjectParam = z
       'they are encoded correctly on the way out'
   )
   .describe('Subject line. Must fit on one line.');
-
-export const bodyParam = z
-  .string()
-  .max(MAX_BODY_CHARS)
-  .describe('Plain-text body of the message.');
-
-export const htmlParam = z
-  .string()
-  .max(MAX_HTML_CHARS)
-  .optional()
-  .describe(
-    'Optional HTML body, sent as multipart/alternative alongside the plain ' +
-      'text. Scripts, event handlers, remotely loaded images (src, srcset, ' +
-      'poster, background) and unsafe URL schemes are removed; preview_mail ' +
-      'reports exactly what was removed. Markup that cannot be cleaned with ' +
-      'confidence is refused rather than sent.'
-  );
 
 /**
  * A Message-ID, with or without the angle brackets.

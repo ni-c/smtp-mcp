@@ -583,7 +583,7 @@ describe('at most once', () => {
       { body: 'Here it is, again.' },
       { subject: 'Quarterly report (final)' },
       { to: ['partner@example.org'] },
-      { html: '<p>Here it is.</p>' },
+      { format: 'markdown' },
     ]) {
       await call(harness.client, 'send_mail', sendArgs(change));
     }

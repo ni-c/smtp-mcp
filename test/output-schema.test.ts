@@ -25,7 +25,8 @@ describe('every tool answers within its declared schema', () => {
       addresses: ['anna@example.net', 'stranger@evil.example'],
     },
     preview_mail: sendArgs({
-      html: '<p>Hello</p><img src="https://tracker.example/p.gif">',
+      body: '[bank.example](https://evil.example) [x](javascript:1) ![p](https://t.example/p.gif)',
+      format: 'markdown',
       quote: 'Original text',
     }),
     test_connection: {},
@@ -67,6 +68,29 @@ describe('every tool answers within its declared schema', () => {
       await harness.close();
     });
   }
+
+  it('preview_mail: a plain-text preview is within the schema too', async () => {
+    const harness = await connect();
+    await harness.client.listTools();
+    const result = await call(harness.client, 'preview_mail', sendArgs());
+    expect(result.isError, textOf(result)).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      format: 'text',
+      notes: [],
+    });
+    expect(result.structuredContent).not.toHaveProperty('html_body');
+    await harness.close();
+  });
+
+  it('preview_mail: declares the truncated block budget() can add', async () => {
+    // budget() shortens the longest list of an oversized preview and says so
+    // in `truncated`; a listing client refuses a key the schema does not have.
+    const harness = await connect();
+    const { tools } = await harness.client.listTools();
+    const preview = tools.find((tool) => tool.name === 'preview_mail');
+    expect(preview?.outputSchema?.properties).toHaveProperty('truncated');
+    await harness.close();
+  });
 
   it('send_mail: the already-sent answer is within the schema too', async () => {
     // The second shape a send can answer with, which a schema written for the

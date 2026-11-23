@@ -15,10 +15,8 @@ import {
 import {
   attachmentsParam,
   bccParam,
-  bodyParam,
   ccParam,
   confirmTokenParam,
-  htmlParam,
   messageIdParam,
   quoteParam,
   referencesParam,
@@ -28,10 +26,10 @@ import {
 import { z } from 'zod';
 
 import { audit } from '../audit.js';
+import { bodyParam, formatParam } from '../compose-body.js';
 import type { RateLimitSlot } from '../ratelimit.js';
 import { ToolInputError } from '../errors.js';
 import { jsonResult, run } from '../result.js';
-import { htmlToText } from '../sanitize.js';
 import type { ToolContext } from './context.js';
 
 const MAX_SUBJECT = 255;
@@ -50,6 +48,11 @@ export function forwardSubject(original: string): string {
     ? original.trim()
     : `Fwd: ${original.trim()}`;
   return subject.slice(0, MAX_SUBJECT);
+}
+
+/** A host as the dialog shows it: the end first when it is long. */
+function shownHost(host: string): string {
+  return host.length <= 60 ? host : `…${host.slice(-60)}`;
 }
 
 /** How many entries of a list get a line of their own before the rest is summed up. */
@@ -193,7 +196,7 @@ async function performSend(
       rejected: [],
       sends_remaining_this_hour: ctx.limiter.remaining(),
       note:
-        'This exact message — same recipients, subject, body, quote, HTML and ' +
+        'This exact message — same recipients, subject, body, format, quote and ' +
         `attachments — was already accepted by the SMTP server as ` +
         `${already.messageId}. It was NOT sent a second time, and nobody was ` +
         'asked again. If a second copy really is wanted, change something in ' +
@@ -281,7 +284,6 @@ async function withSlot(
   for (const [label, value] of [
     ['Body', args.body],
     ['Quoted original', args.quote],
-    ['HTML part', args.html],
   ] as const) {
     if (value === undefined) continue;
     details.push({
@@ -289,19 +291,19 @@ async function withSlot(
       value: value === '' ? '(empty)' : value,
     });
   }
-  if (prepared.composed.htmlBody !== undefined) {
-    // The HTML part as the recipient will read it, not as it is written. The
-    // first 200 characters of markup are mostly tags, so the line above shows
-    // the human almost nothing of what an HTML client will display — and on a
-    // message with no plain body, that display *is* the message. The text is
-    // derived from the sanitised part, the same way the text/plain alternative
-    // is derived when the body is empty.
-    const asText = htmlToText(prepared.composed.htmlBody);
-    details.push({
-      label: `HTML part as the recipient reads it (${asText.length} characters)`,
-      value: asText === '' ? '(empty)' : asText,
-    });
-  }
+  // A link shows its text, not where it goes, and the body line above is cut
+  // at 200 characters — a destination past that point, or behind innocent
+  // words, would reach the recipient unseen. Every host gets a line, and the
+  // end of a long host comes first: that is where its registrable domain is,
+  // and mcp-approval cuts every value at 200 characters.
+  details.push(
+    ...prepared.linkHosts.map((entry, i) => ({
+      label: `Link host ${i + 1}/${prepared.linkHosts.length}`,
+      value:
+        `${shownHost(entry.host)} — ${entry.count} link(s), ` +
+        `the first ${entry.first}`,
+    }))
+  );
   if (prepared.attachments.length > 0) {
     details.push(
       ...linesFor(
@@ -310,44 +312,48 @@ async function withSlot(
       )
     );
   }
-  if (prepared.composed.htmlRemoved.length > 0) {
-    // A detail rather than part of the consequence, and not for tidiness:
-    // `mcp-approval` flattens and caps every detail value and leaves the
-    // consequence alone, and this list carries caller-derived text — a scheme
-    // name is whatever the caller wrote before the colon.
-    details.push({
-      label: 'Removed from the HTML part before sending',
-      value: prepared.composed.htmlRemoved.join(', '),
-    });
-  }
-
   let consequence =
     'Mail cannot be recalled once the SMTP server has accepted it.';
+  if (args.format === 'markdown') {
+    // Server words and counts only, here rather than among the details:
+    // mcp-approval heads the details as caller-supplied and cuts each at 200
+    // characters, and neither is true of this.
+    const links = prepared.composed.bodyLinks.length;
+    consequence +=
+      '\n\nThe message also carries an HTML part rendered from the body as ' +
+      'Markdown: no images and no markup of its own. ' +
+      (links === 0
+        ? 'It contains no links.'
+        : `It links to ${links} destination(s) on ${prepared.linkHosts.length} ` +
+          'host(s), every host listed below.');
+    for (const note of prepared.composed.bodyNotes) consequence += ` ${note}`;
+  }
+  if (/\p{Cf}/u.test(args.body)) {
+    // The dialog strips these before showing the body; a mail client obeys
+    // them. Said here, in the server's words, so the difference is visible.
+    consequence +=
+      '\n\nNote: the body contains invisible or direction-changing ' +
+      'characters (zero-width spaces, soft hyphens, bidi overrides). The ' +
+      "lines below do not show them; the recipient's mail client applies them.";
+  }
   for (const { field, patterns } of prepared.suspicious) {
     // Server-authored text naming server-authored constants: the pattern names
     // are ours, the matched text is not repeated here. The two readings differ
     // and the sentence has to say which one this is. A quote that gives orders
     // is a forwarded message that tries to — passed on unchanged, correctly. A
-    // body or HTML part that gives orders is the model writing them, which is
-    // what such a quote was trying to make happen.
+    // body that gives orders is the model writing them, which is what such a
+    // quote was trying to make happen.
     const shapes = `${patterns.length} known prompt-injection shape(s): ${patterns.join(', ')}`;
     consequence +=
       field === 'quote'
         ? `\n\nNote: the quoted original matches ${shapes}. It is being passed ` +
           'on unchanged, which is correct for a quote — but check who asked for ' +
           'this message to be sent.'
-        : `\n\nWARNING: the ${field === 'body' ? 'body' : 'HTML part'} — text ` +
+        : '\n\nWARNING: the body — text ' +
           `the model wrote itself — matches ${shapes}. That is not a forwarded ` +
           'message giving orders; it is this message giving them. Check who ' +
           'asked for it before approving.';
   }
-  if (prepared.textHtmlDiverge) {
-    consequence +=
-      '\n\nNote: the plain-text body and the HTML part say different things. ' +
-      'Most recipients see only the HTML part; read the "HTML part as the ' +
-      'recipient reads it" line, not just the body.';
-  }
-
   const outcome = await ctx.approval.requestApproval(
     server,
     mcp,
@@ -530,7 +536,7 @@ export function registerSendTools(
         bcc: bccParam,
         subject: subjectParam,
         body: bodyParam,
-        html: htmlParam,
+        format: formatParam,
         attachments: attachmentsParam,
         confirm_token: confirmTokenParam,
       }),
@@ -583,7 +589,7 @@ export function registerSendTools(
           .optional()
           .describe('Overrides the subject derived from original_subject.'),
         body: bodyParam,
-        html: htmlParam,
+        format: formatParam,
         quote: quoteParam,
         in_reply_to: messageIdParam,
         references: referencesParam,
@@ -645,7 +651,7 @@ export function registerSendTools(
         quote: quoteParam.describe(
           'The original message text, included below your own. Passed through unchanged.'
         ),
-        html: htmlParam,
+        format: formatParam,
         references: referencesParam,
         attachments: attachmentsParam,
         confirm_token: confirmTokenParam,
